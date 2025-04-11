@@ -5,6 +5,7 @@ import requests
 import locale
 import logging
 import urllib.parse
+import json
 
 from io import BytesIO
 from telebot import types
@@ -65,6 +66,9 @@ car_year = None
 vehicle_id = None
 vehicle_no = None
 
+# Глобальные переменные для сбора данных пользователя
+user_data = {}
+
 
 def print_message(message):
     print("\n\n##############")
@@ -113,7 +117,7 @@ def get_usdt_to_rub_rate():
         print_message(f"Курс USDT-RUB: {usdt_rub_rate} ₽")
 
     except requests.RequestException as e:
-        print(f"Ошибка при получении курса: {e}")
+        print_message(f"Ошибка при получении курса: {e}")
         return None
 
 
@@ -435,21 +439,10 @@ def calculate_cost(link, message):
 
     if not car_price and car_engine_displacement and formatted_car_date:
         keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Александр)", url="https://t.me/kkkkww12"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Сергей)", url="https://wa.me/821079288398"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Александр)", url="https://wa.me/821022354808"
-            )
-        )
+        keyboard.add(types.InlineKeyboardButton(
+            "Оставить заявку",
+            callback_data="add_crm_deal",
+        ))
         keyboard.add(
             types.InlineKeyboardButton(
                 "Рассчитать стоимость другого автомобиля",
@@ -509,17 +502,17 @@ def calculate_cost(link, message):
             100000  # Брокерские услуги
         )
 
-        total_cost_usdt = (
-            price_usdt +  # Стоимость автомобиля в рублях
-            (customs_fee / usdt_rub_rate) +  # Таможенный сбор
-            (customs_duty / usdt_rub_rate) +  # Таможенная пошлина
-            (recycling_fee / usdt_rub_rate) +  # Утилизационный сбор
-            (100000 / usdt_rub_rate) +  # ФРАХТ
-            (100000 / usdt_rub_rate)  # Брокерские услуги
-        )
+        # total_cost_usdt = (
+        #     price_usdt +  # Стоимость автомобиля в рублях
+        #     (customs_fee / usdt_rub_rate) +  # Таможенный сбор
+        #     (customs_duty / usdt_rub_rate) +  # Таможенная пошлина
+        #     (recycling_fee / usdt_rub_rate) +  # Утилизационный сбор
+        #     (100000 / usdt_rub_rate) +  # ФРАХТ
+        #     (100000 / usdt_rub_rate)  # Брокерские услуги
+        # )
 
         car_data['freight_rub'] = 100000
-        car_data['freight_usdt'] = 100000 / usdt_rub_rate
+        car_data['freight_usdt'] = 1000
 
         car_data['broker_rub'] = 100000
         car_data['broker_usdt'] = 100000 / usdt_rub_rate
@@ -544,17 +537,16 @@ def calculate_cost(link, message):
             f"⚙️ КПП: {formatted_transmission}\n\n"
             f"💱 Актуальные курсы валют:\nUSDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\nUSDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>\n\n"
             f"💰 <b>Стоимость:</b>\n"
-            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b> | $<b>{format_number(price_usdt)}</b> | <b>{format_number(price_rub)}</b> ₽\n\n"
-            f"• ФРАХТ:\n$<b>{format_number(car_data['freight_usdt'])}</b> | <b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
-            f"• Брокерские услуги:\n$<b>{format_number(car_data['broker_usdt'])}</b> | <b>{format_number(car_data['broker_rub'])}</b> ₽\n\n"
+            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b> | <b>{format_number(price_rub)}</b> ₽\n\n"
+            f"• ФРАХТ:\n<b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
+            f"• Брокерские услуги:\n<b>{format_number(car_data['broker_rub'])}</b> ₽\n\n"
             f"📝 <b>Таможенные платежи:</b>\n"
-            f"• Таможенный сбор:\n$<b>{format_number(car_data['customs_fee_usdt'])}</b> | <b>{format_number(car_data['customs_fee_rub'])}</b> ₽\n\n"
-            f"• Таможенная пошлина:\n$<b>{format_number(car_data['customs_duty_usdt'])}</b> | <b>{format_number(car_data['customs_duty_rub'])}</b> ₽\n\n"
-            f"• Утилизационный сбор:\n$<b>{format_number(car_data['util_fee_usdt'])}</b> | <b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
+            f"• Таможенный сбор:\n<b>{format_number(car_data['customs_fee_rub'])}</b> ₽\n\n"
+            f"• Таможенная пошлина:\n<b>{format_number(car_data['customs_duty_rub'])}</b> ₽\n\n"
+            f"• Утилизационный сбор:\n<b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
             f"💵 <b>Итоговая стоимость под ключ до Владивостока:</b>\n"
-            f"<b>${format_number(total_cost_usdt)}</b> | <b>{format_number(total_cost)} ₽</b>\n\n"
+            f"<b>{format_number(total_cost)} ₽</b>\n\n"
             f"🔗 <a href='{preview_link}'>Ссылка на автомобиль</a>\n\n"
-            f"⚠️ <i>Если данное авто попадает под санкции, пожалуйста уточните возможность отправки в вашу страну у менеджеров:</i>\n\n"
             f"👨‍💼 🇰🇷 +82 10 2382 4808 <a href='https://wa.me/821023824808'>Александр</a>\n"
             f"👨‍💼 🇰🇷 +82 10 7928 8398 <a href='https://wa.me/821079288398'>Сергей</a>\n"
             f"👨‍💼 🇰🇷 +82 10 2235 4808 <a href='https://wa.me/821022354808'>Александр</a>\n"
@@ -566,27 +558,22 @@ def calculate_cost(link, message):
         # keyboard.add(
         #     types.InlineKeyboardButton("Детали расчёта", callback_data="detail")
         # )
+        # keyboard.add(
+        #     types.InlineKeyboardButton(
+        #         "Оставить заявку",
+        #         callback_data="",
+        #     )
+        # )
         keyboard.add(
             types.InlineKeyboardButton(
                 "Выплаты по ДТП",
                 callback_data="technical_report",
             )
         )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Александр)", url="https://t.me/kkkkww12"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Сергей)", url="https://wa.me/821079288398"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Александр)", url="https://wa.me/821022354808"
-            )
-        )
+        keyboard.add(types.InlineKeyboardButton(
+            "Оставить заявку",
+            callback_data="add_crm_deal",
+        ))
         keyboard.add(
             types.InlineKeyboardButton(
                 "Расчёт другого автомобиля",
@@ -676,9 +663,26 @@ def get_insurance_total():
 # Callback query handler
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback_query(call):
-    global car_data, car_id_external, usd_rate
+    global car_data, car_id_external, usd_rate, user_data
 
-    if call.data.startswith("detail"):
+    if call.data == "add_crm_deal":
+        # Отвечаем на callback, чтобы убрать индикатор загрузки у кнопки
+        bot.answer_callback_query(call.id, "Начинаем оформление заявки")
+        
+        # Отправляем сообщение о начале процесса
+        bot.send_message(
+            call.message.chat.id, 
+            "✏️ Оформление заявки на автомобиль\n\nДля связи с вами нам потребуется некоторая информация."
+        )
+        
+        # Запрашиваем ФИО
+        msg = bot.send_message(call.message.chat.id, "Пожалуйста, введите ваше ФИО:")
+        # Регистрируем следующий шаг - сбор телефона
+        user_data[call.from_user.id] = {'step': 'waiting_name', 'msg_id': msg.message_id}
+        # Устанавливаем обработчик для следующего сообщения от этого пользователя
+        bot.register_next_step_handler(msg, process_name_step)
+        
+    elif call.data.startswith("detail"):
         print_message("[ЗАПРОС] ДЕТАЛИЗАЦИЯ РАСЧËТА")
 
         detail_message = (
@@ -728,21 +732,10 @@ def handle_callback_query(call):
                 )
             )
 
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Александр)", url="https://t.me/kkkkww12"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Сергей)", url="https://wa.me/821079288398"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Написать менеджеру (Александр)", url="https://wa.me/821022354808"
-            )
-        )
+        keyboard.add(types.InlineKeyboardButton(
+            "Оставить заявку",
+            callback_data="add_crm_deal",
+        ))
 
         bot.send_message(
             call.message.chat.id,
@@ -882,20 +875,6 @@ def handle_message(message):
             f"🇰🇷 +82 10 7928 8398 (https://wa.me/821079288398) «Сергей»\n"
             f"🇰🇷 +82 10 2235 4808 (https://wa.me/821022354808) «Александр»",
         )
-    elif user_message == "WhatsApp":
-        contacts = [
-            {"name": "Константин", "phone": "+82 10-7650-3034"},
-            # {"name": "Владимир", "phone": "+82 10-7930-2218"},
-            # {"name": "Илья", "phone": "+82 10-3458-2205"},
-        ]
-
-        message_text = "\n".join(
-            [
-                f"[{contact['name']}](https://wa.me/{contact['phone'].replace('+', '')})"
-                for contact in contacts
-            ]
-        )
-        bot.send_message(message.chat.id, message_text, parse_mode="Markdown")
 
     elif user_message == "О нас":
         about_message = "MDM GROUP\nЮжнокорейская экспортная компания.\nСпециализируемся на поставках автомобилей из Южной Кореи в страны СНГ.\nОпыт работы более 5 лет.\n\nПочему выбирают нас?\n• Надежность и скорость доставки.\n• Индивидуальный подход к каждому клиенту.\n• Полное сопровождение сделки.\n\n💬 Ваш путь к надежным автомобилям начинается здесь!"
@@ -926,6 +905,266 @@ def handle_message(message):
             message.chat.id,
             "Пожалуйста, введите корректную ссылку на автомобиль с сайта www.encar.com или fem.encar.com.",
         )
+
+
+def process_name_step(message):
+    """Обработчик для ввода имени пользователя"""
+    user_id = message.from_user.id
+    if user_id in user_data:
+        # Сохраняем имя
+        user_data[user_id]['name'] = message.text
+        user_data[user_id]['step'] = 'waiting_phone'
+        
+        # Запрашиваем номер телефона
+        msg = bot.send_message(message.chat.id, "Теперь введите ваш номер телефона:")
+        bot.register_next_step_handler(msg, process_phone_step)
+    else:
+        bot.send_message(message.chat.id, "Произошла ошибка. Пожалуйста, начните заново.", reply_markup=main_menu())
+
+def process_phone_step(message):
+    """Обработчик для ввода номера телефона"""
+    user_id = message.from_user.id
+    if user_id in user_data:
+        # Сохраняем телефон
+        user_data[user_id]['phone'] = message.text
+        user_data[user_id]['step'] = 'waiting_budget'
+        
+        # Запрашиваем бюджет
+        msg = bot.send_message(message.chat.id, "Введите ваш бюджет (в рублях):")
+        bot.register_next_step_handler(msg, process_budget_step)
+    else:
+        bot.send_message(message.chat.id, "Произошла ошибка. Пожалуйста, начните заново.", reply_markup=main_menu())
+
+def process_budget_step(message):
+    """Обработчик для ввода бюджета"""
+    user_id = message.from_user.id
+    if user_id in user_data:
+        try:
+            # Проверяем, что введено число
+            budget = float(message.text.replace(' ', '').replace(',', '.'))
+            
+            # Сохраняем бюджет
+            user_data[user_id]['budget'] = budget
+            user_data[user_id]['step'] = 'waiting_car_link'
+            
+            # Запрашиваем ссылку на автомобиль
+            msg = bot.send_message(message.chat.id, "Введите ссылку на интересующий автомобиль (если есть) или напишите 'нет':")
+            bot.register_next_step_handler(msg, process_car_link_step)
+        except ValueError:
+            # Если бюджет введен некорректно, просим повторить
+            msg = bot.send_message(message.chat.id, "Пожалуйста, введите корректную сумму (только цифры):")
+            bot.register_next_step_handler(msg, process_budget_step)
+    else:
+        bot.send_message(message.chat.id, "Произошла ошибка. Пожалуйста, начните заново.", reply_markup=main_menu())
+
+def process_car_link_step(message):
+    """Обработчик для ввода ссылки на автомобиль"""
+    user_id = message.from_user.id
+    if user_id in user_data:
+        # Получаем все данные пользователя
+        name = user_data[user_id]['name']
+        phone = user_data[user_id]['phone']
+        budget = user_data[user_id]['budget']
+        car_link = message.text
+        
+        # Отправляем сообщение о том, что заявка обрабатывается
+        processing_msg = bot.send_message(message.chat.id, "⏳ Отправляем вашу заявку... Пожалуйста, подождите.")
+        
+        # Создаем сделку в amoCRM
+        try:
+            if create_amocrm_lead(name, phone, budget, car_link):
+                # Успешное создание сделки
+                bot.edit_message_text(
+                    "✅ Заявка успешно создана!",
+                    message.chat.id,
+                    processing_msg.message_id
+                )
+                
+                success_msg = (
+                    f"Спасибо, {name}!\n\n"
+                    f"✅ Ваша заявка успешно отправлена.\n"
+                    f"📞 С вами свяжутся в ближайшее время по указанному номеру телефона: {phone}\n\n"
+                    f"Если у вас возникли вопросы, вы можете связаться с нашими менеджерами напрямую через бот."
+                )
+                bot.send_message(message.chat.id, success_msg, reply_markup=main_menu())
+            else:
+                # Ошибка при создании сделки
+                bot.edit_message_text(
+                    "❌ Произошла ошибка при отправке заявки.",
+                    message.chat.id,
+                    processing_msg.message_id
+                )
+                
+                error_msg = (
+                    f"Извините, {name}, не удалось создать заявку.\n\n"
+                    f"Пожалуйста, попробуйте позже или свяжитесь с нашими менеджерами напрямую:"
+                )
+                bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
+                logging.error(f"Ошибка при создании заявки для user_id={user_id}, name={name}")
+        except Exception as e:
+            bot.edit_message_text(
+                "❌ Произошла непредвиденная ошибка.",
+                message.chat.id,
+                processing_msg.message_id
+            )
+            
+            error_msg = f"Произошла непредвиденная ошибка при обработке заявки. Пожалуйста, попробуйте позже."
+            bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
+            logging.error(f"Исключение при обработке заявки: {str(e)}")
+        
+        # Очищаем данные пользователя
+        del user_data[user_id]
+    else:
+        bot.send_message(message.chat.id, "Произошла ошибка. Пожалуйста, начните заново.", reply_markup=main_menu())
+
+
+def format_phone(phone):
+    """
+    Форматирует номер телефона, удаляя лишние символы
+    и добавляя +7 в начало, если нужно
+    """
+    # Удаляем все символы, кроме цифр
+    clean_phone = re.sub(r'\D', '', phone)
+    
+    # Если номер начинается с 8 или 7, конвертируем в +7
+    if clean_phone.startswith('8') and len(clean_phone) == 11:
+        clean_phone = '7' + clean_phone[1:]
+    
+    # Если нет кода страны, предполагаем +7
+    if len(clean_phone) == 10:
+        clean_phone = '7' + clean_phone
+    
+    # Добавляем +
+    if not clean_phone.startswith('+'):
+        clean_phone = '+' + clean_phone
+        
+    logging.info(f"Отформатирован номер телефона: {phone} -> {clean_phone}")
+    return clean_phone
+
+def create_amocrm_lead(name, phone, budget, car_link=None):
+    """
+    Создает новую заявку через webhook amoCRM
+    """
+    logging.info(f"Создаем заявку: имя={name}, телефон={phone}, бюджет={budget}, ссылка={car_link}")
+    
+    # Форматируем бюджет как целое число
+    try:
+        price = int(float(budget))
+    except (ValueError, TypeError):
+        logging.error(f"Ошибка преобразования бюджета '{budget}' в число")
+        price = 0
+    
+    # Форматируем номер телефона
+    formatted_phone = format_phone(phone)
+    
+    # Пробуем отправить с помощью прямого POST запроса на wazzup24
+    try:
+        # Прямой webhook для wazzup24
+        webhook_url = "https://integrations.wazzup24.com/amocrm_v2/webhooks/717379e6-9e50-430f-9fff-30a2f56eb03c"
+        
+        # Более простой формат данных для wazzup24
+        wazzup_data = {
+            "name": name,
+            "phone": formatted_phone,
+            "message": f"Новая заявка из телеграм-бота!\n\nФИО: {name}\nТелефон: {formatted_phone}\nБюджет: {price} руб.",
+            "budget": price
+        }
+        
+        # Если есть ссылка на авто, добавляем её
+        if car_link and car_link.lower() != 'нет':
+            wazzup_data["message"] += f"\nСсылка на автомобиль: {car_link}"
+            wazzup_data["car_link"] = car_link
+        
+        logging.info(f"Отправляем данные в wazzup24: {wazzup_data}")
+        
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.post(
+            webhook_url,
+            headers=headers,
+            json=wazzup_data,
+            timeout=15
+        )
+        
+        logging.info(f"Ответ от wazzup24: статус={response.status_code}, текст={response.text}")
+        
+        # Если первый способ не сработал, пробуем альтернативный формат
+        if response.status_code not in [200, 201, 202, 204]:
+            logging.warning("Первая попытка отправки не удалась, пробуем альтернативный формат")
+            
+            # Создаем сущность "сделка" для amoCRM в формате x-www-form-urlencoded
+            lead_data = {
+                "name": f"Заявка от {name}",
+                "price": price,
+                "tags": "telegram_bot",
+                "custom_fields": [
+                    {
+                        "id": 274693,  # ID поля телефона
+                        "values": [
+                            {
+                                "value": formatted_phone
+                            }
+                        ]
+                    }
+                ]
+            }
+            
+            # Если есть ссылка на авто, добавляем её
+            if car_link and car_link.lower() != 'нет':
+                lead_data["custom_fields"].append({
+                    "id": 1295963,  # ID поля для ссылки
+                    "values": [
+                        {
+                            "value": car_link
+                        }
+                    ]
+                })
+            
+            # Формируем структуру данных для webhook согласно документации
+            webhook_data = {
+                "leads": {
+                    "add": {
+                        "0": lead_data
+                    }
+                }
+            }
+            
+            # Преобразуем в JSON строку
+            webhook_json = json.dumps(webhook_data)
+            
+            # Создаем форму в формате x-www-form-urlencoded
+            form_data = {
+                'request': webhook_json
+            }
+            
+            logging.info(f"Отправляем данные в альтернативном формате: {form_data}")
+            
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+            
+            response = requests.post(
+                webhook_url,
+                headers=headers,
+                data=form_data,
+                timeout=15
+            )
+            
+            logging.info(f"Ответ от webhook (альтернативный формат): статус={response.status_code}, текст={response.text}")
+        
+        # Проверяем успешность запроса
+        if response.status_code in [200, 201, 202, 204]:
+            print_message(f"Заявка успешно отправлена. Статус: {response.status_code}")
+            return True
+        else:
+            logging.error(f"Ошибка отправки заявки: код={response.status_code}, ответ={response.text}")
+            return False
+    except Exception as e:
+        logging.error(f"Исключение при отправке запроса: {str(e)}")
+        print(f"Ошибка при отправке запроса: {str(e)}")
+        return False
 
 
 # Run the bot
