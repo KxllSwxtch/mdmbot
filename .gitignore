@@ -1,0 +1,39 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+bot.log
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Database
+*.db
+*.sqlite3
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Temporary files
+*.tmp
+.DS_Store
+
+# Chromedriver and browser data
+chromedriver
+.wdm/
