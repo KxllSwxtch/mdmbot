@@ -1061,15 +1061,11 @@ def process_car_link_step(message):
                     f"Ошибка при создании заявки для user_id={user_id}, name={name}"
                 )
         except Exception as e:
-            bot.edit_message_text(
-                "❌ Произошла непредвиденная ошибка.",
-                message.chat.id,
-                processing_msg.message_id,
-            )
-
-            error_msg = f"Произошла непредвиденная ошибка при обработке заявки. Пожалуйста, попробуйте позже."
-            bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
-            logging.error(f"Исключение при обработке заявки: {str(e)}")
+            logging.exception(
+                "Ошибка при создании заявки в amoCRM"
+            )  # выводит traceback
+            print_message(f"❌ Внутренняя ошибка: {str(e)}")
+            return False
 
         # Очищаем данные пользователя
         del user_data[user_id]
