@@ -303,6 +303,10 @@ def send_welcome(message):
 
     get_currency_rates()
 
+    # Отправляем приветственное видео
+    video_url = "https://res.cloudinary.com/dazj4gjli/video/upload/v1744443895/IMG_9266_guzqka.mp4"
+    bot.send_video(message.chat.id, video_url)
+
     user_first_name = message.from_user.first_name
     welcome_message = (
         f"Здравствуйте, {user_first_name}!\n\n"
