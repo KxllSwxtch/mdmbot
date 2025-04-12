@@ -1120,15 +1120,15 @@ def create_amocrm_lead(name, phone, budget, car_link=None):
 
     formatted_phone = format_phone(phone)
 
-    access_token = ""
-    refresh_token = ""
+    access_token = os.getenv("AMOCRM_ACCESS_TOKEN")
+    refresh_token = os.getenv("AMOCRM_REFRESH_TOKEN")
 
-    if exists("access_token.txt"):
-        with open("access_token.txt", "r") as f:
-            access_token = f.read().strip()
-    if exists("refresh_token.txt"):
-        with open("refresh_token.txt", "r") as f:
-            refresh_token = f.read().strip()
+    # if exists("access_token.txt"):
+    #     with open("access_token.txt", "r") as f:
+    #         access_token = f.read().strip()
+    # if exists("refresh_token.txt"):
+    #     with open("refresh_token.txt", "r") as f:
+    #         refresh_token = f.read().strip()
 
     if not access_token or not refresh_token:
         logging.error("Отсутствуют токены доступа к AmoCRM")
