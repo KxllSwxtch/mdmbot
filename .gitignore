@@ -37,3 +37,5 @@ build/
 # Chromedriver and browser data
 chromedriver
 .wdm/
+
+amotest.py

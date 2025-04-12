@@ -6,7 +6,10 @@ import locale
 import logging
 import urllib.parse
 import json
+import phonenumbers
 
+
+from amocrm.v2 import Lead, custom_field, tokens, Contact
 from io import BytesIO
 from telebot import types
 from dotenv import load_dotenv
@@ -18,6 +21,7 @@ from utils import (
     calculate_age,
     format_number,
 )
+
 
 CALCULATE_CAR_TEXT = "Расчёт Автомобиля"
 DEALER_COMMISSION = 0.02  # 2%
@@ -70,6 +74,16 @@ vehicle_no = None
 user_data = {}
 
 
+def is_valid_phone(phone):
+    try:
+        parsed = phonenumbers.parse(phone, None)
+        return phonenumbers.is_possible_number(parsed) and phonenumbers.is_valid_number(
+            parsed
+        )
+    except phonenumbers.NumberParseException:
+        return False
+
+
 def print_message(message):
     print("\n\n##############")
     print(f"{message}")
@@ -108,12 +122,12 @@ def get_usdt_to_rub_rate():
 
         # Получаем курс USDT к рублю из ответа
         usdt_rub_rate = float(data["data"]["amount"])
-        
+
         # Округляем до двух знаков после запятой и добавляем 2 рубля
         usdt_rub_rate = round(usdt_rub_rate, 2) + 2
-        
+
         # Вычисляем курс рубля к воне через курс USDT
-        
+
         print_message(f"Курс USDT-RUB: {usdt_rub_rate} ₽")
 
     except requests.RequestException as e:
@@ -134,21 +148,22 @@ def get_currency_rates():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         naver_response = requests.get(usdt_krw_url, headers=headers)
-        
+
         # Используем BeautifulSoup для парсинга HTML
         from bs4 import BeautifulSoup
-        soup = BeautifulSoup(naver_response.text, 'html.parser')
-        
+
+        soup = BeautifulSoup(naver_response.text, "html.parser")
+
         # Извлекаем значение курса из strong.price
         price_element = soup.select_one("strong.price em")
         if price_element:
-            krw_rate_text = price_element.text.strip().replace(',', '')
+            krw_rate_text = price_element.text.strip().replace(",", "")
             krw = float(krw_rate_text) - 10
-            
+
             # Устанавливаем глобальные переменные
             usd_rate = 1.0  # USDT курс к доллару 1:1
             usdt_krw_rate = krw
-            
+
             rates_text = f"USDT/KRW: <b>{krw:.2f} ₩</b>"
             return rates_text
         else:
@@ -188,7 +203,7 @@ def cbr_command(message):
 
     try:
         rates_text = get_currency_rates()
-        
+
         # Получаем курс USDT/RUB
         try:
             get_usdt_to_rub_rate()
@@ -439,10 +454,12 @@ def calculate_cost(link, message):
 
     if not car_price and car_engine_displacement and formatted_car_date:
         keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton(
-            "Оставить заявку",
-            callback_data="add_crm_deal",
-        ))
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "Оставить заявку",
+                callback_data="add_crm_deal",
+            )
+        )
         keyboard.add(
             types.InlineKeyboardButton(
                 "Рассчитать стоимость другого автомобиля",
@@ -494,12 +511,12 @@ def calculate_cost(link, message):
 
         # Расчет итоговой стоимости автомобиля в рублях
         total_cost = (
-            price_rub +  # Стоимость автомобиля в рублях
-            customs_fee +  # Таможенный сбор
-            customs_duty +  # Таможенная пошлина
-            recycling_fee +  # Утилизационный сбор
-            100000 +  # ФРАХТ
-            100000  # Брокерские услуги
+            price_rub  # Стоимость автомобиля в рублях
+            + customs_fee  # Таможенный сбор
+            + customs_duty  # Таможенная пошлина
+            + recycling_fee  # Утилизационный сбор
+            + 100000  # ФРАХТ
+            + 100000  # Брокерские услуги
         )
 
         # total_cost_usdt = (
@@ -511,20 +528,20 @@ def calculate_cost(link, message):
         #     (100000 / usdt_rub_rate)  # Брокерские услуги
         # )
 
-        car_data['freight_rub'] = 100000
-        car_data['freight_usdt'] = 1000
+        car_data["freight_rub"] = 100000
+        car_data["freight_usdt"] = 1000
 
-        car_data['broker_rub'] = 100000
-        car_data['broker_usdt'] = 100000 / usdt_rub_rate
+        car_data["broker_rub"] = 100000
+        car_data["broker_usdt"] = 100000 / usdt_rub_rate
 
-        car_data['customs_fee_rub'] = customs_fee
-        car_data['customs_fee_usdt'] = customs_fee / usdt_rub_rate
+        car_data["customs_fee_rub"] = customs_fee
+        car_data["customs_fee_usdt"] = customs_fee / usdt_rub_rate
 
-        car_data['customs_duty_rub'] = customs_duty
-        car_data['customs_duty_usdt'] = customs_duty / usdt_rub_rate
+        car_data["customs_duty_rub"] = customs_duty
+        car_data["customs_duty_usdt"] = customs_duty / usdt_rub_rate
 
-        car_data['util_fee_rub'] = recycling_fee
-        car_data['util_fee_usdt'] = recycling_fee / usdt_rub_rate
+        car_data["util_fee_rub"] = recycling_fee
+        car_data["util_fee_usdt"] = recycling_fee / usdt_rub_rate
 
         preview_link = f"https://fem.encar.com/cars/detail/{car_id}"
 
@@ -570,10 +587,12 @@ def calculate_cost(link, message):
                 callback_data="technical_report",
             )
         )
-        keyboard.add(types.InlineKeyboardButton(
-            "Оставить заявку",
-            callback_data="add_crm_deal",
-        ))
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "Оставить заявку",
+                callback_data="add_crm_deal",
+            )
+        )
         keyboard.add(
             types.InlineKeyboardButton(
                 "Расчёт другого автомобиля",
@@ -668,20 +687,23 @@ def handle_callback_query(call):
     if call.data == "add_crm_deal":
         # Отвечаем на callback, чтобы убрать индикатор загрузки у кнопки
         bot.answer_callback_query(call.id, "Начинаем оформление заявки")
-        
+
         # Отправляем сообщение о начале процесса
         bot.send_message(
-            call.message.chat.id, 
-            "✏️ Оформление заявки на автомобиль\n\nДля связи с вами нам потребуется некоторая информация."
+            call.message.chat.id,
+            "✏️ Оформление заявки на автомобиль\n\nДля связи с вами нам потребуется некоторая информация.",
         )
-        
+
         # Запрашиваем ФИО
         msg = bot.send_message(call.message.chat.id, "Пожалуйста, введите ваше ФИО:")
         # Регистрируем следующий шаг - сбор телефона
-        user_data[call.from_user.id] = {'step': 'waiting_name', 'msg_id': msg.message_id}
+        user_data[call.from_user.id] = {
+            "step": "waiting_name",
+            "msg_id": msg.message_id,
+        }
         # Устанавливаем обработчик для следующего сообщения от этого пользователя
         bot.register_next_step_handler(msg, process_name_step)
-        
+
     elif call.data.startswith("detail"):
         print_message("[ЗАПРОС] ДЕТАЛИЗАЦИЯ РАСЧËТА")
 
@@ -732,10 +754,12 @@ def handle_callback_query(call):
                 )
             )
 
-        keyboard.add(types.InlineKeyboardButton(
-            "Оставить заявку",
-            callback_data="add_crm_deal",
-        ))
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "Оставить заявку",
+                callback_data="add_crm_deal",
+            )
+        )
 
         bot.send_message(
             call.message.chat.id,
@@ -912,28 +936,46 @@ def process_name_step(message):
     user_id = message.from_user.id
     if user_id in user_data:
         # Сохраняем имя
-        user_data[user_id]['name'] = message.text
-        user_data[user_id]['step'] = 'waiting_phone'
-        
+        user_data[user_id]["name"] = message.text
+        user_data[user_id]["step"] = "waiting_phone"
+
         # Запрашиваем номер телефона
         msg = bot.send_message(message.chat.id, "Теперь введите ваш номер телефона:")
         bot.register_next_step_handler(msg, process_phone_step)
     else:
-        bot.send_message(message.chat.id, "Произошла ошибка. Пожалуйста, начните заново.", reply_markup=main_menu())
+        bot.send_message(
+            message.chat.id,
+            "Произошла ошибка. Пожалуйста, начните заново.",
+            reply_markup=main_menu(),
+        )
+
 
 def process_phone_step(message):
     """Обработчик для ввода номера телефона"""
     user_id = message.from_user.id
+    phone = message.text.strip()
+
+    if not is_valid_phone(phone):
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ Пожалуйста, введите корректный номер телефона в международном формате (например, +7..., +82..., +1...).",
+        )
+        bot.register_next_step_handler(msg, process_phone_step)  # Повтор ввода
+        return
+
     if user_id in user_data:
-        # Сохраняем телефон
-        user_data[user_id]['phone'] = message.text
-        user_data[user_id]['step'] = 'waiting_budget'
-        
-        # Запрашиваем бюджет
-        msg = bot.send_message(message.chat.id, "Введите ваш бюджет (в рублях):")
+        user_data[user_id]["phone"] = phone
+        user_data[user_id]["step"] = "waiting_budget"
+
+        msg = bot.send_message(message.chat.id, "Введите ваш бюджет (в вонах):")
         bot.register_next_step_handler(msg, process_budget_step)
     else:
-        bot.send_message(message.chat.id, "Произошла ошибка. Пожалуйста, начните заново.", reply_markup=main_menu())
+        bot.send_message(
+            message.chat.id,
+            "Произошла ошибка. Пожалуйста, начните заново.",
+            reply_markup=main_menu(),
+        )
+
 
 def process_budget_step(message):
     """Обработчик для ввода бюджета"""
@@ -941,35 +983,47 @@ def process_budget_step(message):
     if user_id in user_data:
         try:
             # Проверяем, что введено число
-            budget = float(message.text.replace(' ', '').replace(',', '.'))
-            
+            budget = float(message.text.replace(" ", "").replace(",", "."))
+
             # Сохраняем бюджет
-            user_data[user_id]['budget'] = budget
-            user_data[user_id]['step'] = 'waiting_car_link'
-            
+            user_data[user_id]["budget"] = budget
+            user_data[user_id]["step"] = "waiting_car_link"
+
             # Запрашиваем ссылку на автомобиль
-            msg = bot.send_message(message.chat.id, "Введите ссылку на интересующий автомобиль (если есть) или напишите 'нет':")
+            msg = bot.send_message(
+                message.chat.id,
+                "Введите ссылку на интересующий автомобиль (если есть) или напишите 'нет':",
+            )
             bot.register_next_step_handler(msg, process_car_link_step)
         except ValueError:
             # Если бюджет введен некорректно, просим повторить
-            msg = bot.send_message(message.chat.id, "Пожалуйста, введите корректную сумму (только цифры):")
+            msg = bot.send_message(
+                message.chat.id, "Пожалуйста, введите корректную сумму (только цифры):"
+            )
             bot.register_next_step_handler(msg, process_budget_step)
     else:
-        bot.send_message(message.chat.id, "Произошла ошибка. Пожалуйста, начните заново.", reply_markup=main_menu())
+        bot.send_message(
+            message.chat.id,
+            "Произошла ошибка. Пожалуйста, начните заново.",
+            reply_markup=main_menu(),
+        )
+
 
 def process_car_link_step(message):
     """Обработчик для ввода ссылки на автомобиль"""
     user_id = message.from_user.id
     if user_id in user_data:
         # Получаем все данные пользователя
-        name = user_data[user_id]['name']
-        phone = user_data[user_id]['phone']
-        budget = user_data[user_id]['budget']
+        name = user_data[user_id]["name"]
+        phone = user_data[user_id]["phone"]
+        budget = user_data[user_id]["budget"]
         car_link = message.text
-        
+
         # Отправляем сообщение о том, что заявка обрабатывается
-        processing_msg = bot.send_message(message.chat.id, "⏳ Отправляем вашу заявку... Пожалуйста, подождите.")
-        
+        processing_msg = bot.send_message(
+            message.chat.id, "⏳ Отправляем вашу заявку... Пожалуйста, подождите."
+        )
+
         # Создаем сделку в amoCRM
         try:
             if create_amocrm_lead(name, phone, budget, car_link):
@@ -977,9 +1031,9 @@ def process_car_link_step(message):
                 bot.edit_message_text(
                     "✅ Заявка успешно создана!",
                     message.chat.id,
-                    processing_msg.message_id
+                    processing_msg.message_id,
                 )
-                
+
                 success_msg = (
                     f"Спасибо, {name}!\n\n"
                     f"✅ Ваша заявка успешно отправлена.\n"
@@ -992,30 +1046,36 @@ def process_car_link_step(message):
                 bot.edit_message_text(
                     "❌ Произошла ошибка при отправке заявки.",
                     message.chat.id,
-                    processing_msg.message_id
+                    processing_msg.message_id,
                 )
-                
+
                 error_msg = (
                     f"Извините, {name}, не удалось создать заявку.\n\n"
                     f"Пожалуйста, попробуйте позже или свяжитесь с нашими менеджерами напрямую:"
                 )
                 bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
-                logging.error(f"Ошибка при создании заявки для user_id={user_id}, name={name}")
+                logging.error(
+                    f"Ошибка при создании заявки для user_id={user_id}, name={name}"
+                )
         except Exception as e:
             bot.edit_message_text(
                 "❌ Произошла непредвиденная ошибка.",
                 message.chat.id,
-                processing_msg.message_id
+                processing_msg.message_id,
             )
-            
+
             error_msg = f"Произошла непредвиденная ошибка при обработке заявки. Пожалуйста, попробуйте позже."
             bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
             logging.error(f"Исключение при обработке заявки: {str(e)}")
-        
+
         # Очищаем данные пользователя
         del user_data[user_id]
     else:
-        bot.send_message(message.chat.id, "Произошла ошибка. Пожалуйста, начните заново.", reply_markup=main_menu())
+        bot.send_message(
+            message.chat.id,
+            "Произошла ошибка. Пожалуйста, начните заново.",
+            reply_markup=main_menu(),
+        )
 
 
 def format_phone(phone):
@@ -1024,157 +1084,218 @@ def format_phone(phone):
     и добавляя +7 в начало, если нужно
     """
     # Удаляем все символы, кроме цифр
-    clean_phone = re.sub(r'\D', '', phone)
-    
+    clean_phone = re.sub(r"\D", "", phone)
+
     # Если номер начинается с 8 или 7, конвертируем в +7
-    if clean_phone.startswith('8') and len(clean_phone) == 11:
-        clean_phone = '7' + clean_phone[1:]
-    
+    if clean_phone.startswith("8") and len(clean_phone) == 11:
+        clean_phone = "7" + clean_phone[1:]
+
     # Если нет кода страны, предполагаем +7
     if len(clean_phone) == 10:
-        clean_phone = '7' + clean_phone
-    
+        clean_phone = "7" + clean_phone
+
     # Добавляем +
-    if not clean_phone.startswith('+'):
-        clean_phone = '+' + clean_phone
-        
+    if not clean_phone.startswith("+"):
+        clean_phone = "+" + clean_phone
+
     logging.info(f"Отформатирован номер телефона: {phone} -> {clean_phone}")
     return clean_phone
 
+
 def create_amocrm_lead(name, phone, budget, car_link=None):
-    """
-    Создает новую заявку через webhook amoCRM
-    """
-    logging.info(f"Создаем заявку: имя={name}, телефон={phone}, бюджет={budget}, ссылка={car_link}")
-    
-    # Форматируем бюджет как целое число
+    import os
+    import requests
+    import json
+    import logging
+    from os.path import exists
+
+    logging.info(
+        f"Создаем заявку: имя={name}, телефон={phone}, бюджет={budget}, ссылка={car_link}"
+    )
+
     try:
         price = int(float(budget))
     except (ValueError, TypeError):
-        logging.error(f"Ошибка преобразования бюджета '{budget}' в число")
         price = 0
-    
-    # Форматируем номер телефона
+
     formatted_phone = format_phone(phone)
-    
-    # Пробуем отправить с помощью прямого POST запроса на wazzup24
-    try:
-        # Прямой webhook для wazzup24
-        webhook_url = "https://integrations.wazzup24.com/amocrm_v2/webhooks/717379e6-9e50-430f-9fff-30a2f56eb03c"
-        
-        # Более простой формат данных для wazzup24
-        wazzup_data = {
-            "name": name,
-            "phone": formatted_phone,
-            "message": f"Новая заявка из телеграм-бота!\n\nФИО: {name}\nТелефон: {formatted_phone}\nБюджет: {price} руб.",
-            "budget": price
+
+    access_token = ""
+    refresh_token = ""
+
+    if exists("access_token.txt"):
+        with open("access_token.txt", "r") as f:
+            access_token = f.read().strip()
+    if exists("refresh_token.txt"):
+        with open("refresh_token.txt", "r") as f:
+            refresh_token = f.read().strip()
+
+    if not access_token or not refresh_token:
+        logging.error("Отсутствуют токены доступа к AmoCRM")
+        return False
+
+    subdomain = os.getenv("AMOCRM_SUBDOMAIN")
+    client_id = os.getenv("AMOCRM_CLIENT_ID")
+    client_secret = os.getenv("AMOCRM_CLIENT_SECRET")
+    redirect_url = os.getenv("AMOCRM_REDIRECT_URL")
+    base_url = f"https://{subdomain}.amocrm.ru/api/v4"
+
+    def refresh_access_token():
+        nonlocal access_token, refresh_token
+        token_url = f"https://{subdomain}.amocrm.ru/oauth2/access_token"
+        data = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "redirect_uri": redirect_url,
         }
-        
-        # Если есть ссылка на авто, добавляем её
-        if car_link and car_link.lower() != 'нет':
-            wazzup_data["message"] += f"\nСсылка на автомобиль: {car_link}"
-            wazzup_data["car_link"] = car_link
-        
-        logging.info(f"Отправляем данные в wazzup24: {wazzup_data}")
-        
-        headers = {
-            'Content-Type': 'application/json'
-        }
-        
-        response = requests.post(
-            webhook_url,
-            headers=headers,
-            json=wazzup_data,
-            timeout=15
-        )
-        
-        logging.info(f"Ответ от wazzup24: статус={response.status_code}, текст={response.text}")
-        
-        # Если первый способ не сработал, пробуем альтернативный формат
-        if response.status_code not in [200, 201, 202, 204]:
-            logging.warning("Первая попытка отправки не удалась, пробуем альтернативный формат")
-            
-            # Создаем сущность "сделка" для amoCRM в формате x-www-form-urlencoded
-            lead_data = {
-                "name": f"Заявка от {name}",
-                "price": price,
-                "tags": "telegram_bot",
-                "custom_fields": [
-                    {
-                        "id": 274693,  # ID поля телефона
-                        "values": [
-                            {
-                                "value": formatted_phone
-                            }
-                        ]
-                    }
-                ]
-            }
-            
-            # Если есть ссылка на авто, добавляем её
-            if car_link and car_link.lower() != 'нет':
-                lead_data["custom_fields"].append({
-                    "id": 1295963,  # ID поля для ссылки
-                    "values": [
-                        {
-                            "value": car_link
-                        }
-                    ]
-                })
-            
-            # Формируем структуру данных для webhook согласно документации
-            webhook_data = {
-                "leads": {
-                    "add": {
-                        "0": lead_data
-                    }
-                }
-            }
-            
-            # Преобразуем в JSON строку
-            webhook_json = json.dumps(webhook_data)
-            
-            # Создаем форму в формате x-www-form-urlencoded
-            form_data = {
-                'request': webhook_json
-            }
-            
-            logging.info(f"Отправляем данные в альтернативном формате: {form_data}")
-            
-            headers = {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-            
-            response = requests.post(
-                webhook_url,
-                headers=headers,
-                data=form_data,
-                timeout=15
-            )
-            
-            logging.info(f"Ответ от webhook (альтернативный формат): статус={response.status_code}, текст={response.text}")
-        
-        # Проверяем успешность запроса
-        if response.status_code in [200, 201, 202, 204]:
-            print_message(f"Заявка успешно отправлена. Статус: {response.status_code}")
+        res = requests.post(token_url, json=data)
+        if res.status_code == 200:
+            result = res.json()
+            access_token = result.get("access_token")
+            refresh_token = result.get("refresh_token")
+            with open("access_token.txt", "w") as f:
+                f.write(access_token)
+            with open("refresh_token.txt", "w") as f:
+                f.write(refresh_token)
             return True
         else:
-            logging.error(f"Ошибка отправки заявки: код={response.status_code}, ответ={response.text}")
+            logging.error(
+                f"Ошибка при обновлении токена: {res.status_code}, {res.text}"
+            )
             return False
-    except Exception as e:
-        logging.error(f"Исключение при отправке запроса: {str(e)}")
-        print(f"Ошибка при отправке запроса: {str(e)}")
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+
+    # --- Шаг 1: создание контакта ---
+    contact_data = [
+        {
+            "name": name,
+            "responsible_user_id": 12208190,
+            "custom_fields_values": [
+                {
+                    "field_code": "PHONE",
+                    "values": [
+                        {
+                            "value": formatted_phone,
+                            "enum_code": "WORK",  # можно также "MOB" или "WORK"
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    contacts_url = f"{base_url}/contacts"
+    contact_response = requests.post(contacts_url, headers=headers, json=contact_data)
+
+    if contact_response.status_code == 401 and refresh_access_token():
+        headers["Authorization"] = f"Bearer {access_token}"
+        contact_response = requests.post(
+            contacts_url, headers=headers, json=contact_data
+        )
+
+    if contact_response.status_code >= 400:
+        logging.error(
+            f"Ошибка при создании контакта: {contact_response.status_code}, {contact_response.text}"
+        )
         return False
+
+    contact_id = contact_response.json().get("id")
+    if not contact_id:
+        contact_id = (
+            contact_response.json()
+            .get("_embedded", {})
+            .get("contacts", [{}])[0]
+            .get("id")
+        )
+    if not contact_id:
+        logging.error("Не удалось получить ID контакта")
+        return False
+
+    logging.info(f"Контакт успешно создан с ID: {contact_id}")
+
+    # --- Шаг 2: создание сделки ---
+    custom_fields = [{"field_id": 1069807, "values": [{"value": price}]}]
+    if car_link and car_link.lower() != "нет":
+        custom_fields.append({"field_id": 1295963, "values": [{"value": car_link}]})
+
+    lead_data = [
+        {
+            "name": f"Заявка от {name}",
+            "price": price,
+            "_embedded": {
+                "contacts": [{"id": contact_id}],
+                "tags": [{"name": "telegram_bot"}],
+            },
+        }
+    ]
+
+    leads_url = f"{base_url}/leads"
+    lead_response = requests.post(leads_url, headers=headers, json=lead_data)
+
+    if lead_response.status_code == 401 and refresh_access_token():
+        headers["Authorization"] = f"Bearer {access_token}"
+        lead_response = requests.post(leads_url, headers=headers, json=lead_data)
+
+    if lead_response.status_code >= 400:
+        logging.error(
+            f"Ошибка при создании сделки: {lead_response.status_code}, {lead_response.text}"
+        )
+        return False
+
+    lead_id = lead_response.json().get("id")
+    if not lead_id:
+        lead_id = (
+            lead_response.json().get("_embedded", {}).get("leads", [{}])[0].get("id")
+        )
+
+    if not lead_id:
+        logging.error("Не удалось получить ID сделки")
+        return False
+
+    logging.info(f"Сделка успешно создана с ID: {lead_id}")
+
+    # --- Шаг 3: добавляем примечание ---
+    notes_url = f"{base_url}/leads/notes"
+    if car_link and car_link.lower() != "нет":
+        note_text = f"Заявка из Telegram\nФИО: {name}\nТелефон: {formatted_phone}\nБюджет: {price}₽\nСсылка: {car_link}"
+    else:
+        note_text = f"Заявка из Telegram\nФИО: {name}\nТелефон: {formatted_phone}\nБюджет: {price}₽"
+
+    note_data = [
+        {"entity_id": lead_id, "note_type": "common", "params": {"text": note_text}}
+    ]
+
+    note_response = requests.post(notes_url, headers=headers, json=note_data)
+
+    if note_response.status_code == 401 and refresh_access_token():
+        headers["Authorization"] = f"Bearer {access_token}"
+        note_response = requests.post(notes_url, headers=headers, json=note_data)
+
+    if note_response.status_code >= 400:
+        logging.warning(
+            f"Ошибка при создании примечания: {note_response.status_code}, {note_response.text}"
+        )
+    else:
+        logging.info("Примечание успешно добавлено")
+
+    print_message(f"✅ Заявка отправлена в amoCRM (ID сделки: {lead_id})")
+    return True
 
 
 # Run the bot
 if __name__ == "__main__":
     set_bot_commands()
-    
+
     # Обновляем курсы валют каждый час
     import threading
     import time
-    
+
     def update_currency_rates():
         while True:
             try:
@@ -1184,11 +1305,11 @@ if __name__ == "__main__":
             except Exception as e:
                 print_message(f"Ошибка при обновлении курсов валют: {e}")
                 time.sleep(60)  # При ошибке пробуем через минуту
-    
+
     # Запускаем обновление курсов в отдельном потоке
     currency_thread = threading.Thread(target=update_currency_rates, daemon=True)
     currency_thread.start()
-    
+
     # Получаем начальные курсы при запуске
     get_currency_rates()
     bot.polling(non_stop=True)
