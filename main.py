@@ -801,17 +801,8 @@ def handle_callback_query(call):
             )
             keyboard.add(
                 types.InlineKeyboardButton(
-                    "Написать менеджеру (Александр)", url="https://t.me/kkkkww12"
-                )
-            )
-            keyboard.add(
-                types.InlineKeyboardButton(
-                    "Написать менеджеру (Сергей)", url="https://wa.me/821079288398"
-                )
-            )
-            keyboard.add(
-                types.InlineKeyboardButton(
-                    "Написать менеджеру (Александр)", url="https://wa.me/821022354808"
+                    "Оставить заявку",
+                    callback_data="add_crm_deal",
                 )
             )
 
@@ -847,17 +838,8 @@ def handle_callback_query(call):
             )
             keyboard.add(
                 types.InlineKeyboardButton(
-                    "Написать менеджеру (Александр)", url="https://t.me/kkkkww12"
-                )
-            )
-            keyboard.add(
-                types.InlineKeyboardButton(
-                    "Написать менеджеру (Сергей)", url="https://wa.me/821079288398"
-                )
-            )
-            keyboard.add(
-                types.InlineKeyboardButton(
-                    "Написать менеджеру (Александр)", url="https://wa.me/821022354808"
+                    "Оставить заявку",
+                    callback_data="add_crm_deal",
                 )
             )
 
