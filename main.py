@@ -967,7 +967,7 @@ def process_phone_step(message):
         user_data[user_id]["phone"] = phone
         user_data[user_id]["step"] = "waiting_budget"
 
-        msg = bot.send_message(message.chat.id, "Введите ваш бюджет (в вонах):")
+        msg = bot.send_message(message.chat.id, "Введите ваш бюджет (в рублях):")
         bot.register_next_step_handler(msg, process_budget_step)
     else:
         bot.send_message(
