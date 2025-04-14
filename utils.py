@@ -1,6 +1,16 @@
 import requests
 import datetime
 import locale
+import random
+import time
+
+# Список User-Agent для запросов к calcus.ru
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+]
 
 PROXY_URL = "http://B01vby:GBno0x@45.118.250.2:8000"
 proxies = {"http": PROXY_URL, "https": PROXY_URL}
@@ -36,6 +46,47 @@ def calculate_age(year, month):
         return "5-7"
     else:
         return "7-0"
+
+
+def get_customs_fees_manual(engine_volume, car_price, car_age, engine_type=1):
+    """
+    Запрашивает расчёт таможенных платежей с сайта calcus.ru для ручного расчёта.
+    :param engine_volume: Объём двигателя (куб. см)
+    :param car_price: Цена авто в вонах
+    :param car_age: Возрастная категория ("0-3", "3-5", "5-7", "7-0")
+    :param engine_type: Тип двигателя (1 - бензин, 2 - дизель, 3 - гибрид, 4 - электромобиль)
+    :return: JSON с результатами расчёта
+    """
+    url = "https://calcus.ru/calculate/Customs"
+
+    payload = {
+        "owner": 1,  # Физлицо
+        "age": car_age,  # Возрастная категория
+        "engine": engine_type,  # Тип двигателя (по умолчанию 1 - бензин)
+        "power": 1,  # Лошадиные силы (можно оставить 1)
+        "power_unit": 1,  # Тип мощности (1 - л.с.)
+        "value": int(engine_volume),  # Объём двигателя
+        "price": int(car_price),  # Цена авто в KRW
+        "curr": "KRW",  # Валюта
+    }
+
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Referer": "https://calcus.ru/",
+        "Origin": "https://calcus.ru",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    try:
+        response = requests.post(url, data=payload, headers=headers, proxies=proxies)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        print(f"Ошибка при запросе к calcus.ru: {e}")
+        # Возвращаем заглушку в случае ошибки
+        return {"sbor": "0", "tax": "0", "util": "0"}
+    finally:
+        time.sleep(2)  # Пауза между запросами
 
 
 def get_customs_fees(engine_volume, car_price, car_year, car_month, engine_type=1):

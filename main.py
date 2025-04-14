@@ -23,7 +23,7 @@ from utils import (
 )
 
 
-CALCULATE_CAR_TEXT = "Расчёт Автомобиля"
+CALCULATE_CAR_TEXT = "Расчёт по ссылке"
 DEALER_COMMISSION = 0.02  # 2%
 
 PROXY_URL = "http://B01vby:GBno0x@45.118.250.2:8000"
@@ -234,7 +234,9 @@ def cbr_command(message):
 # Main menu creation function
 def main_menu():
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    keyboard.add(types.KeyboardButton(CALCULATE_CAR_TEXT))
+    keyboard.add(
+        types.KeyboardButton(CALCULATE_CAR_TEXT), types.KeyboardButton("Ручной расчёт")
+    )
     keyboard.add(
         types.KeyboardButton("Написать менеджеру"),
         types.KeyboardButton("О нас"),
@@ -523,15 +525,6 @@ def calculate_cost(link, message):
             + 100000  # Брокерские услуги
         )
 
-        # total_cost_usdt = (
-        #     price_usdt +  # Стоимость автомобиля в рублях
-        #     (customs_fee / usdt_rub_rate) +  # Таможенный сбор
-        #     (customs_duty / usdt_rub_rate) +  # Таможенная пошлина
-        #     (recycling_fee / usdt_rub_rate) +  # Утилизационный сбор
-        #     (100000 / usdt_rub_rate) +  # ФРАХТ
-        #     (100000 / usdt_rub_rate)  # Брокерские услуги
-        # )
-
         car_data["freight_rub"] = 100000
         car_data["freight_usdt"] = 1000
 
@@ -688,7 +681,28 @@ def get_insurance_total():
 def handle_callback_query(call):
     global car_data, car_id_external, usd_rate, user_data
 
-    if call.data == "add_crm_deal":
+    # Обработка ручного расчёта - выбор возраста
+    if call.data.startswith("manual_age_"):
+        bot.answer_callback_query(call.id)
+        age = call.data.replace("manual_age_", "")
+
+        # Сохраняем возраст в данных пользователя
+        if call.from_user.id not in user_data:
+            user_data[call.from_user.id] = {}
+        user_data[call.from_user.id]["manual_age"] = age
+
+        # Запрашиваем объём двигателя
+        msg = bot.send_message(
+            call.message.chat.id,
+            "Введите объём двигателя в кубических сантиметрах (например, 2000):",
+        )
+        bot.register_next_step_handler(msg, process_manual_engine_volume)
+
+    elif call.data == "manual_calculation":
+        bot.answer_callback_query(call.id)
+        start_manual_calculation(call.message.chat.id)
+
+    elif call.data == "add_crm_deal":
         # Отвечаем на callback, чтобы убрать индикатор загрузки у кнопки
         bot.answer_callback_query(call.id, "Начинаем оформление заявки")
 
@@ -871,6 +885,10 @@ def handle_message(message):
             message.chat.id,
             "Пожалуйста, введите ссылку на автомобиль с сайта www.encar.com:",
         )
+
+    # Обработка кнопки "Ручной расчёт"
+    elif user_message == "Ручной расчёт":
+        start_manual_calculation(message.chat.id)
 
     # Проверка на корректность ссылки
     elif re.match(r"^https?://(www|fem)\.encar\.com/.*", user_message):
@@ -1271,6 +1289,215 @@ def create_amocrm_lead(name, phone, budget, car_link=None):
 
     print_message(f"✅ Заявка отправлена в amoCRM (ID сделки: {lead_id})")
     return True
+
+
+# Функции для ручного расчёта
+def start_manual_calculation(chat_id):
+    """Начало процесса ручного расчёта"""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("До 3 лет", callback_data="manual_age_0-3"),
+        types.InlineKeyboardButton("От 3 до 5 лет", callback_data="manual_age_3-5"),
+        types.InlineKeyboardButton("От 5 до 7 лет", callback_data="manual_age_5-7"),
+        types.InlineKeyboardButton("От 7 лет", callback_data="manual_age_7-0"),
+    )
+
+    bot.send_message(chat_id, "Выберите возраст автомобиля:", reply_markup=markup)
+
+
+def process_manual_engine_volume(message):
+    """Обработчик ввода объёма двигателя при ручном расчёте"""
+    try:
+        engine_volume = int(message.text.strip())
+        user_id = message.from_user.id
+
+        if user_id in user_data and "manual_age" in user_data[user_id]:
+            user_data[user_id]["engine_volume"] = engine_volume
+
+            # Запрашиваем стоимость автомобиля
+            msg = bot.send_message(
+                message.chat.id,
+                "Введите стоимость автомобиля в корейских вонах (например, 20000000):",
+            )
+            bot.register_next_step_handler(msg, process_manual_car_price)
+        else:
+            bot.send_message(
+                message.chat.id,
+                "Произошла ошибка. Начните ручной расчёт заново.",
+                reply_markup=main_menu(),
+            )
+    except ValueError:
+        msg = bot.send_message(
+            message.chat.id,
+            "Пожалуйста, введите корректное числовое значение объёма двигателя:",
+        )
+        bot.register_next_step_handler(msg, process_manual_engine_volume)
+
+
+def process_manual_car_price(message):
+    """Обработчик ввода стоимости автомобиля при ручном расчёте"""
+    try:
+        car_price = int(message.text.strip())
+        user_id = message.from_user.id
+
+        if (
+            user_id in user_data
+            and "manual_age" in user_data[user_id]
+            and "engine_volume" in user_data[user_id]
+        ):
+            # Выполняем расчёт
+            calculate_manual_cost(
+                user_data[user_id]["manual_age"],
+                user_data[user_id]["engine_volume"],
+                car_price,
+                message,
+            )
+        else:
+            bot.send_message(
+                message.chat.id,
+                "Произошла ошибка. Начните ручной расчёт заново.",
+                reply_markup=main_menu(),
+            )
+    except ValueError:
+        msg = bot.send_message(
+            message.chat.id,
+            "Пожалуйста, введите корректное числовое значение стоимости:",
+        )
+        bot.register_next_step_handler(msg, process_manual_car_price)
+
+
+def calculate_manual_cost(age, engine_volume, car_price, message):
+    """Функция расчёта стоимости по введённым вручную параметрам"""
+    global car_data, usdt_krw_rate, usdt_rub_rate
+
+    print_message("ЗАПРОС НА РУЧНОЙ РАСЧЁТ АВТОМОБИЛЯ")
+
+    # Получаем актуальный курс валют
+    get_usdt_to_rub_rate()
+    get_currency_rates()
+
+    # Отправляем сообщение о том, что идёт расчёт
+    processing_message = bot.send_message(
+        message.chat.id, "Выполняю расчёт стоимости. Пожалуйста подождите ⏳"
+    )
+
+    try:
+        # Возрастные категории для отображения пользователю
+        age_formatted_map = {
+            "0-3": "до 3 лет",
+            "3-5": "от 3 до 5 лет",
+            "5-7": "от 5 до 7 лет",
+            "7-0": "от 7 лет",
+        }
+        age_formatted = age_formatted_map.get(age, "неизвестный возраст")
+
+        # Форматирование объёма двигателя для отображения
+        engine_volume_formatted = f"{format_number(engine_volume)} cc"
+
+        # Расчёт стоимости в рублях
+        price_krw = car_price
+        price_usdt = int(price_krw) / usdt_krw_rate
+        price_rub = int(price_usdt) * usdt_rub_rate
+
+        # Получаем таможенные сборы
+        from utils import get_customs_fees_manual
+
+        logging.info(
+            f"Запрос таможенных сборов: объем={engine_volume}, цена={car_price}, возраст={age}"
+        )
+        response = get_customs_fees_manual(engine_volume, price_krw, age, engine_type=1)
+        logging.info(f"Ответ calcus.ru: {response}")
+
+        # Таможенный сбор
+        customs_fee = clean_number(response["sbor"])
+        customs_duty = clean_number(response["tax"])
+        recycling_fee = clean_number(response["util"])
+
+        # Расчет итоговой стоимости автомобиля в рублях
+        total_cost = (
+            price_rub  # Стоимость автомобиля в рублях
+            + customs_fee  # Таможенный сбор
+            + customs_duty  # Таможенная пошлина
+            + recycling_fee  # Утилизационный сбор
+            + 100000  # ФРАХТ
+            + 100000  # Брокерские услуги
+        )
+
+        car_data["freight_rub"] = 100000
+        car_data["freight_usdt"] = 1000
+
+        car_data["broker_rub"] = 100000
+        car_data["broker_usdt"] = 100000 / usdt_rub_rate
+
+        car_data["customs_fee_rub"] = customs_fee
+        car_data["customs_fee_usdt"] = customs_fee / usdt_rub_rate
+
+        car_data["customs_duty_rub"] = customs_duty
+        car_data["customs_duty_usdt"] = customs_duty / usdt_rub_rate
+
+        car_data["util_fee_rub"] = recycling_fee
+        car_data["util_fee_usdt"] = recycling_fee / usdt_rub_rate
+
+        # Формирование сообщения результата
+        result_message = (
+            f"🚗 <b>Ручной расчёт автомобиля</b>\n\n"
+            f"📅 Возраст: {age_formatted}\n"
+            f"🔧 Объём двигателя: {engine_volume_formatted}\n\n"
+            f"💱 Актуальные курсы валют:\nUSDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\nUSDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>\n\n"
+            f"💰 <b>Стоимость:</b>\n"
+            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b> | <b>{format_number(price_rub)}</b> ₽\n\n"
+            f"• ФРАХТ:\n<b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
+            f"• Брокерские услуги:\n<b>{format_number(car_data['broker_rub'])}</b> ₽\n\n"
+            f"📝 <b>Таможенные платежи:</b>\n"
+            f"• Таможенный сбор:\n<b>{format_number(car_data['customs_fee_rub'])}</b> ₽\n\n"
+            f"• Таможенная пошлина:\n<b>{format_number(car_data['customs_duty_rub'])}</b> ₽\n\n"
+            f"• Утилизационный сбор:\n<b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
+            f"💵 <b>Итоговая стоимость под ключ до Владивостока:</b>\n"
+            f"<b>{format_number(total_cost)} ₽</b>\n\n"
+            f"👨‍💼 🇰🇷 +82 10 2382 4808 <a href='https://wa.me/821023824808'>Александр</a>\n"
+            f"👨‍💼 🇰🇷 +82 10 7928 8398 <a href='https://wa.me/821079288398'>Сергей</a>\n"
+            f"👨‍💼 🇰🇷 +82 10 2235 4808 <a href='https://wa.me/821022354808'>Александр</a>\n"
+            f"📢 <a href='https://t.me/mdmgroupkorea'>Официальный телеграм канал</a>\n"
+        )
+
+        # Клавиатура с дальнейшими действиями
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "Оставить заявку",
+                callback_data="add_crm_deal",
+            )
+        )
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "Новый ручной расчёт",
+                callback_data="manual_calculation",
+            )
+        )
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "Расчёт по ссылке",
+                callback_data="calculate_another",
+            )
+        )
+
+        bot.send_message(
+            message.chat.id,
+            result_message,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+    except Exception as e:
+        bot.send_message(
+            message.chat.id,
+            f"Произошла ошибка при расчёте: {str(e)}. Попробуйте снова.",
+            reply_markup=main_menu(),
+        )
+
+    finally:
+        # Удаляем сообщение о процессе расчёта
+        bot.delete_message(message.chat.id, processing_message.message_id)
 
 
 # Run the bot
