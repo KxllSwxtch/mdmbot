@@ -691,12 +691,74 @@ def handle_callback_query(call):
             user_data[call.from_user.id] = {}
         user_data[call.from_user.id]["manual_age"] = age
 
-        # Запрашиваем объём двигателя
-        msg = bot.send_message(
-            call.message.chat.id,
-            "Введите объём двигателя в кубических сантиметрах (например, 2000):",
+        # Запрашиваем объём двигателя с помощью кнопок
+        markup = types.InlineKeyboardMarkup(row_width=4)
+
+        # Создаем кнопки для стандартных объемов двигателя
+        engine_volumes = [
+            1000,
+            1300,
+            1400,
+            1500,
+            1600,
+            1700,
+            2000,
+            2200,
+            2500,
+            3000,
+            3300,
+            3500,
+            4000,
+            4400,
+        ]
+        volume_buttons = []
+
+        for volume in engine_volumes:
+            volume_buttons.append(
+                types.InlineKeyboardButton(
+                    f"{volume} cc", callback_data=f"engine_volume_{volume}"
+                )
+            )
+
+        # Распределяем кнопки по рядам (по 3 кнопки в ряду)
+        for i in range(0, len(volume_buttons), 3):
+            if i + 2 < len(volume_buttons):
+                markup.add(
+                    volume_buttons[i], volume_buttons[i + 1], volume_buttons[i + 2]
+                )
+            elif i + 1 < len(volume_buttons):
+                markup.add(volume_buttons[i], volume_buttons[i + 1])
+            else:
+                markup.add(volume_buttons[i])
+
+        bot.send_message(
+            call.message.chat.id, "Выберите объём двигателя:", reply_markup=markup
         )
-        bot.register_next_step_handler(msg, process_manual_engine_volume)
+
+    # Обработка выбора объема двигателя
+    elif call.data.startswith("engine_volume_"):
+        bot.answer_callback_query(call.id)
+        engine_volume = int(call.data.replace("engine_volume_", ""))
+
+        # Сохраняем объем двигателя в данных пользователя
+        if (
+            call.from_user.id in user_data
+            and "manual_age" in user_data[call.from_user.id]
+        ):
+            user_data[call.from_user.id]["engine_volume"] = engine_volume
+
+            # Запрашиваем стоимость автомобиля
+            msg = bot.send_message(
+                call.message.chat.id,
+                "Введите стоимость автомобиля в корейских вонах (например, 20 000 000):",
+            )
+            bot.register_next_step_handler(msg, process_manual_car_price)
+        else:
+            bot.send_message(
+                call.message.chat.id,
+                "Произошла ошибка. Начните ручной расчёт заново.",
+                reply_markup=main_menu(),
+            )
 
     elif call.data == "manual_calculation":
         bot.answer_callback_query(call.id)
@@ -1317,7 +1379,7 @@ def process_manual_engine_volume(message):
             # Запрашиваем стоимость автомобиля
             msg = bot.send_message(
                 message.chat.id,
-                "Введите стоимость автомобиля в корейских вонах (например, 20000000):",
+                "Введите стоимость автомобиля в корейских вонах (например, 20 000 000):",
             )
             bot.register_next_step_handler(msg, process_manual_car_price)
         else:
@@ -1337,7 +1399,8 @@ def process_manual_engine_volume(message):
 def process_manual_car_price(message):
     """Обработчик ввода стоимости автомобиля при ручном расчёте"""
     try:
-        car_price = int(message.text.strip())
+        # Удаляем пробелы из введенной строки перед преобразованием в число
+        car_price = int(message.text.strip().replace(" ", ""))
         user_id = message.from_user.id
 
         if (
@@ -1368,6 +1431,7 @@ def process_manual_car_price(message):
 
 def calculate_manual_cost(age, engine_volume, car_price, message):
     """Функция расчёта стоимости по введённым вручную параметрам"""
+
     global car_data, usdt_krw_rate, usdt_rub_rate
 
     print_message("ЗАПРОС НА РУЧНОЙ РАСЧЁТ АВТОМОБИЛЯ")
@@ -1454,9 +1518,6 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
             f"• Утилизационный сбор:\n<b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
             f"💵 <b>Итоговая стоимость под ключ до Владивостока:</b>\n"
             f"<b>{format_number(total_cost)} ₽</b>\n\n"
-            f"👨‍💼 🇰🇷 +82 10 2382 4808 <a href='https://wa.me/821023824808'>Александр</a>\n"
-            f"👨‍💼 🇰🇷 +82 10 7928 8398 <a href='https://wa.me/821079288398'>Сергей</a>\n"
-            f"👨‍💼 🇰🇷 +82 10 2235 4808 <a href='https://wa.me/821022354808'>Александр</a>\n"
             f"📢 <a href='https://t.me/mdmgroupkorea'>Официальный телеграм канал</a>\n"
         )
 
