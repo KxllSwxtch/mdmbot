@@ -52,6 +52,9 @@ locale.setlocale(locale.LC_ALL, "en_US.UTF-8")
 # Storage for the last error message ID
 last_error_message_id = {}
 
+# Отслеживание последних сообщений меню для каждого пользователя
+user_last_menu = {}  # {user_id: [message_id1, message_id2, ...]}
+
 # global variables
 car_data = {}
 car_id_external = ""
@@ -316,6 +319,149 @@ def send_welcome(message):
         "Выберите действие из меню ниже."
     )
     bot.send_message(message.chat.id, welcome_message, reply_markup=main_menu())
+
+
+# Обработчики для специфических callback запросов, размещаем их перед основным обработчиком
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_application")
+def handle_cancel_application(call):
+    """Обработчик для отмены заявки"""
+    bot.answer_callback_query(call.id, "Отменяем заявку")
+    cancel_application(call.message.chat.id, call.from_user.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_name_step")
+def handle_back_to_name_step(call):
+    """Обработчик для возврата к вводу имени"""
+    bot.answer_callback_query(call.id, "Возвращаемся к вводу имени")
+
+    user_id = call.from_user.id
+    if user_id in user_data and "name" in user_data[user_id]:
+        # Очищаем предыдущие меню
+        clear_previous_menus(call.message.chat.id, user_id)
+
+        # Сохраняем шаг
+        user_data[user_id]["step"] = "waiting_name"
+
+        # Создаем клавиатуру с кнопкой отмены
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton(
+                "🚫 Отменить заявку", callback_data="cancel_application"
+            )
+        )
+
+        # Отправляем сообщение для ввода имени
+        msg = bot.send_message(
+            call.message.chat.id,
+            f"Пожалуйста, введите ваше ФИО:\n(Текущее значение: {user_data[user_id]['name']})",
+            reply_markup=markup,
+        )
+        bot.register_next_step_handler(msg, process_name_step)
+    else:
+        # Если данных нет, начинаем процесс заново
+        bot.send_message(
+            call.message.chat.id,
+            "Произошла ошибка. Начнем заново.",
+            reply_markup=main_menu(),
+        )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_phone_step")
+def handle_back_to_phone_step(call):
+    """Обработчик для возврата к вводу телефона"""
+    bot.answer_callback_query(call.id, "Возвращаемся к вводу телефона")
+
+    user_id = call.from_user.id
+    if user_id in user_data and "name" in user_data[user_id]:
+        # Очищаем предыдущие меню
+        clear_previous_menus(call.message.chat.id, user_id)
+
+        # Сохраняем шаг
+        user_data[user_id]["step"] = "waiting_phone"
+
+        # Создаем клавиатуру с кнопками навигации
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("◀️ Назад", callback_data="back_to_name_step")
+        )
+        markup.add(
+            types.InlineKeyboardButton(
+                "🚫 Отменить заявку", callback_data="cancel_application"
+            )
+        )
+
+        # Показываем текущий телефон, если он есть
+        phone_text = (
+            f"\n(Текущее значение: {user_data[user_id]['phone']})"
+            if "phone" in user_data[user_id]
+            else ""
+        )
+
+        # Отправляем сообщение для ввода телефона
+        msg = bot.send_message(
+            call.message.chat.id,
+            f"Теперь введите ваш номер телефона:{phone_text}",
+            reply_markup=markup,
+        )
+        bot.register_next_step_handler(msg, process_phone_step)
+    else:
+        # Если данных нет, начинаем процесс заново
+        bot.send_message(
+            call.message.chat.id,
+            "Произошла ошибка. Начнем заново.",
+            reply_markup=main_menu(),
+        )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_budget_step")
+def handle_back_to_budget_step(call):
+    """Обработчик для возврата к вводу бюджета"""
+    bot.answer_callback_query(call.id, "Возвращаемся к вводу бюджета")
+
+    user_id = call.from_user.id
+    if (
+        user_id in user_data
+        and "name" in user_data[user_id]
+        and "phone" in user_data[user_id]
+    ):
+        # Очищаем предыдущие меню
+        clear_previous_menus(call.message.chat.id, user_id)
+
+        # Сохраняем шаг
+        user_data[user_id]["step"] = "waiting_budget"
+
+        # Создаем клавиатуру с кнопками навигации
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("◀️ Назад", callback_data="back_to_phone_step")
+        )
+        markup.add(
+            types.InlineKeyboardButton(
+                "🚫 Отменить заявку", callback_data="cancel_application"
+            )
+        )
+
+        # Показываем текущий бюджет, если он есть
+        budget_text = (
+            f"\n(Текущее значение: {user_data[user_id]['budget']} ₽)"
+            if "budget" in user_data[user_id]
+            else ""
+        )
+
+        # Отправляем сообщение для ввода бюджета
+        msg = bot.send_message(
+            call.message.chat.id,
+            f"Введите ваш бюджет (в рублях):{budget_text}",
+            reply_markup=markup,
+        )
+        bot.register_next_step_handler(msg, process_budget_step)
+    else:
+        # Если данных нет, начинаем процесс заново
+        bot.send_message(
+            call.message.chat.id,
+            "Произошла ошибка. Начнем заново.",
+            reply_markup=main_menu(),
+        )
 
 
 # Error handling function
@@ -678,6 +824,15 @@ def get_insurance_total():
 def handle_callback_query(call):
     global car_data, car_id_external, usd_rate, user_data
 
+    # Пропускаем callback_data, которые обрабатываются отдельными обработчиками
+    if call.data in [
+        "cancel_application",
+        "back_to_name_step",
+        "back_to_phone_step",
+        "back_to_budget_step",
+    ]:
+        return
+
     # Обработка ручного расчёта - выбор возраста
     if call.data.startswith("manual_age_"):
         bot.answer_callback_query(call.id)
@@ -687,6 +842,9 @@ def handle_callback_query(call):
         if call.from_user.id not in user_data:
             user_data[call.from_user.id] = {}
         user_data[call.from_user.id]["manual_age"] = age
+
+        # Очищаем предыдущие меню перед показом нового
+        clear_previous_menus(call.message.chat.id, call.from_user.id)
 
         # Запрашиваем объём двигателя с помощью кнопок
         markup = types.InlineKeyboardMarkup(row_width=4)
@@ -728,9 +886,20 @@ def handle_callback_query(call):
             else:
                 markup.add(volume_buttons[i])
 
-        bot.send_message(
+        # Добавляем кнопку "Назад"
+        markup.add(
+            types.InlineKeyboardButton("◀️ Назад", callback_data="back_to_age_selection")
+        )
+
+        # Отправляем сообщение и сохраняем его ID
+        sent_msg = bot.send_message(
             call.message.chat.id, "Выберите объём двигателя:", reply_markup=markup
         )
+
+        # Сохраняем ID сообщения для последующей очистки
+        if call.from_user.id not in user_last_menu:
+            user_last_menu[call.from_user.id] = []
+        user_last_menu[call.from_user.id].append(sent_msg.message_id)
 
     # Обработка выбора объема двигателя
     elif call.data.startswith("engine_volume_"):
@@ -744,11 +913,29 @@ def handle_callback_query(call):
         ):
             user_data[call.from_user.id]["engine_volume"] = engine_volume
 
+            # Очищаем предыдущие меню перед показом нового
+            clear_previous_menus(call.message.chat.id, call.from_user.id)
+
+            # Создаем клавиатуру с кнопкой "Назад"
+            markup = types.InlineKeyboardMarkup()
+            markup.add(
+                types.InlineKeyboardButton(
+                    "◀️ Назад", callback_data="back_to_engine_selection"
+                )
+            )
+
             # Запрашиваем стоимость автомобиля
             msg = bot.send_message(
                 call.message.chat.id,
                 "Введите стоимость автомобиля в корейских вонах (например, 20 000 000):",
+                reply_markup=markup,
             )
+
+            # Сохраняем ID сообщения для последующей очистки
+            if call.from_user.id not in user_last_menu:
+                user_last_menu[call.from_user.id] = []
+            user_last_menu[call.from_user.id].append(msg.message_id)
+
             bot.register_next_step_handler(msg, process_manual_car_price)
         else:
             bot.send_message(
@@ -759,7 +946,86 @@ def handle_callback_query(call):
 
     elif call.data == "manual_calculation":
         bot.answer_callback_query(call.id)
-        start_manual_calculation(call.message.chat.id)
+        start_manual_calculation(call.message.chat.id, call.from_user.id)
+
+    # Обработка кнопки "Назад" при выборе объема двигателя
+    elif call.data == "back_to_age_selection":
+        bot.answer_callback_query(call.id)
+
+        # Очищаем данные о выбранном объеме
+        clear_user_step_data(call.from_user.id, "engine_volume")
+
+        # Возвращаемся к выбору возраста
+        start_manual_calculation(call.message.chat.id, call.from_user.id)
+
+    # Обработка кнопки "Назад" при вводе стоимости
+    elif call.data == "back_to_engine_selection":
+        bot.answer_callback_query(call.id)
+
+        # Очищаем данные о введенной цене
+        clear_user_step_data(call.from_user.id, "car_price")
+
+        # Очищаем предыдущие меню
+        clear_previous_menus(call.message.chat.id, call.from_user.id)
+
+        # Получаем сохраненный возраст из данных пользователя
+        user_id = call.from_user.id
+        if user_id in user_data and "manual_age" in user_data[user_id]:
+            # Вызываем функцию обработки выбора возраста для возврата к выбору объема двигателя
+            age = user_data[user_id]["manual_age"]
+
+            # Создаем клавиатуру с кнопками объема двигателя
+            markup = types.InlineKeyboardMarkup(row_width=3)
+
+            # Создаем кнопки для стандартных объемов двигателя
+            engine_volumes = [
+                1000,
+                1300,
+                1400,
+                1500,
+                1600,
+                1700,
+                2000,
+                2200,
+                2500,
+                3000,
+                3300,
+                3500,
+                4000,
+                4400,
+            ]
+
+            # Добавляем кнопки по 3 в ряд
+            for i in range(0, len(engine_volumes), 3):
+                row_buttons = []
+                for j in range(i, min(i + 3, len(engine_volumes))):
+                    row_buttons.append(
+                        types.InlineKeyboardButton(
+                            f"{engine_volumes[j]} cc",
+                            callback_data=f"engine_volume_{engine_volumes[j]}",
+                        )
+                    )
+                markup.row(*row_buttons)
+
+            # Добавляем кнопку Назад
+            markup.add(
+                types.InlineKeyboardButton(
+                    "◀️ Назад", callback_data="back_to_age_selection"
+                )
+            )
+
+            # Отправляем сообщение с клавиатурой
+            sent_msg = bot.send_message(
+                call.message.chat.id, "Выберите объём двигателя:", reply_markup=markup
+            )
+
+            # Сохраняем ID сообщения для последующей очистки
+            if user_id not in user_last_menu:
+                user_last_menu[user_id] = []
+            user_last_menu[user_id].append(sent_msg.message_id)
+        else:
+            # Если данных нет, начинаем процесс заново
+            start_manual_calculation(call.message.chat.id, call.from_user.id)
 
     elif call.data == "add_crm_deal":
         # Отвечаем на callback, чтобы убрать индикатор загрузки у кнопки
@@ -771,8 +1037,19 @@ def handle_callback_query(call):
             "✏️ Оформление заявки на автомобиль\n\nДля связи с вами нам потребуется некоторая информация.",
         )
 
+        # Создаем клавиатуру с кнопкой отмены
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton(
+                "🚫 Отменить заявку", callback_data="cancel_application"
+            )
+        )
+
         # Запрашиваем ФИО
-        msg = bot.send_message(call.message.chat.id, "Пожалуйста, введите ваше ФИО:")
+        msg = bot.send_message(
+            call.message.chat.id, "Пожалуйста, введите ваше ФИО:", reply_markup=markup
+        )
+
         # Регистрируем следующий шаг - сбор телефона
         user_data[call.from_user.id] = {
             "step": "waiting_name",
@@ -947,7 +1224,7 @@ def handle_message(message):
 
     # Обработка кнопки "Ручной расчёт"
     elif user_message == "Ручной расчёт":
-        start_manual_calculation(message.chat.id)
+        start_manual_calculation(message.chat.id, message.from_user.id)
 
     # Проверка на корректность ссылки
     elif re.match(r"^https?://(www|fem)\.encar\.com/.*", user_message):
@@ -1002,8 +1279,18 @@ def process_name_step(message):
         user_data[user_id]["name"] = message.text
         user_data[user_id]["step"] = "waiting_phone"
 
+        # Создаем клавиатуру с кнопками навигации
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton(
+                "🚫 Отменить заявку", callback_data="cancel_application"
+            )
+        )
+
         # Запрашиваем номер телефона
-        msg = bot.send_message(message.chat.id, "Теперь введите ваш номер телефона:")
+        msg = bot.send_message(
+            message.chat.id, "Теперь введите ваш номер телефона:", reply_markup=markup
+        )
         bot.register_next_step_handler(msg, process_phone_step)
     else:
         bot.send_message(
@@ -1019,9 +1306,18 @@ def process_phone_step(message):
     phone = message.text.strip()
 
     if not is_valid_phone(phone):
+        # Создаем клавиатуру с кнопками навигации
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton(
+                "🚫 Отменить заявку", callback_data="cancel_application"
+            )
+        )
+
         msg = bot.send_message(
             message.chat.id,
             "❌ Пожалуйста, введите корректный номер телефона в международном формате (например, +7..., +82..., +1...).",
+            reply_markup=markup,
         )
         bot.register_next_step_handler(msg, process_phone_step)  # Повтор ввода
         return
@@ -1030,7 +1326,20 @@ def process_phone_step(message):
         user_data[user_id]["phone"] = phone
         user_data[user_id]["step"] = "waiting_budget"
 
-        msg = bot.send_message(message.chat.id, "Введите ваш бюджет (в рублях):")
+        # Создаем клавиатуру с кнопками навигации
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("◀️ Назад", callback_data="back_to_name_step")
+        )
+        markup.add(
+            types.InlineKeyboardButton(
+                "🚫 Отменить заявку", callback_data="cancel_application"
+            )
+        )
+
+        msg = bot.send_message(
+            message.chat.id, "Введите ваш бюджет (в рублях):", reply_markup=markup
+        )
         bot.register_next_step_handler(msg, process_budget_step)
     else:
         bot.send_message(
@@ -1052,16 +1361,45 @@ def process_budget_step(message):
             user_data[user_id]["budget"] = budget
             user_data[user_id]["step"] = "waiting_car_link"
 
+            # Создаем клавиатуру с кнопками навигации
+            markup = types.InlineKeyboardMarkup()
+            markup.add(
+                types.InlineKeyboardButton(
+                    "◀️ Назад", callback_data="back_to_phone_step"
+                )
+            )
+            markup.add(
+                types.InlineKeyboardButton(
+                    "🚫 Отменить заявку", callback_data="cancel_application"
+                )
+            )
+
             # Запрашиваем ссылку на автомобиль
             msg = bot.send_message(
                 message.chat.id,
                 "Введите ссылку на интересующий автомобиль (если есть) или напишите 'нет':",
+                reply_markup=markup,
             )
             bot.register_next_step_handler(msg, process_car_link_step)
         except ValueError:
             # Если бюджет введен некорректно, просим повторить
+            # Создаем клавиатуру с кнопками навигации
+            markup = types.InlineKeyboardMarkup()
+            markup.add(
+                types.InlineKeyboardButton(
+                    "◀️ Назад", callback_data="back_to_phone_step"
+                )
+            )
+            markup.add(
+                types.InlineKeyboardButton(
+                    "🚫 Отменить заявку", callback_data="cancel_application"
+                )
+            )
+
             msg = bot.send_message(
-                message.chat.id, "Пожалуйста, введите корректную сумму (только цифры):"
+                message.chat.id,
+                "Пожалуйста, введите корректную сумму (только цифры):",
+                reply_markup=markup,
             )
             bot.register_next_step_handler(msg, process_budget_step)
     else:
@@ -1128,6 +1466,25 @@ def process_car_link_step(message):
                 "Ошибка при создании заявки в amoCRM"
             )  # выводит traceback
             print_message(f"❌ Внутренняя ошибка: {str(e)}")
+
+            # Показываем ошибку пользователю и предлагаем вернуться назад
+            markup = types.InlineKeyboardMarkup()
+            markup.add(
+                types.InlineKeyboardButton(
+                    "◀️ Назад", callback_data="back_to_budget_step"
+                )
+            )
+            markup.add(
+                types.InlineKeyboardButton(
+                    "🚫 Отменить заявку", callback_data="cancel_application"
+                )
+            )
+
+            bot.send_message(
+                message.chat.id,
+                "Произошла ошибка при отправке заявки. Пожалуйста, попробуйте еще раз или обратитесь к менеджеру напрямую.",
+                reply_markup=markup,
+            )
             return False
 
         # Очищаем данные пользователя
@@ -1351,8 +1708,17 @@ def create_amocrm_lead(name, phone, budget, car_link=None):
 
 
 # Функции для ручного расчёта
-def start_manual_calculation(chat_id):
+def start_manual_calculation(chat_id, user_id=None):
     """Начало процесса ручного расчёта"""
+    # Если user_id не передан, пытаемся получить его из данных чата
+    if user_id is None:
+        # В этом случае мы не знаем ID пользователя, так что очистить меню не сможем
+        pass
+    else:
+        # Очищаем предыдущие меню
+        clear_previous_menus(chat_id, user_id)
+
+    # Создаем клавиатуру для выбора возраста
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("До 3 лет", callback_data="manual_age_0-3"),
@@ -1361,7 +1727,16 @@ def start_manual_calculation(chat_id):
         types.InlineKeyboardButton("От 7 лет", callback_data="manual_age_7-0"),
     )
 
-    bot.send_message(chat_id, "Выберите возраст автомобиля:", reply_markup=markup)
+    # Отправляем сообщение с выбором возраста
+    sent_msg = bot.send_message(
+        chat_id, "Выберите возраст автомобиля:", reply_markup=markup
+    )
+
+    # Сохраняем ID сообщения для последующей очистки
+    if user_id:
+        if user_id not in user_last_menu:
+            user_last_menu[user_id] = []
+        user_last_menu[user_id].append(sent_msg.message_id)
 
 
 def process_manual_engine_volume(message):
@@ -1395,16 +1770,44 @@ def process_manual_engine_volume(message):
 
 def process_manual_car_price(message):
     """Обработчик ввода стоимости автомобиля при ручном расчёте"""
+    # Если сообщение было удалено или это не текстовое сообщение, прерываем обработку
+    if not hasattr(message, "text") or not message.text:
+        return
+
+    # Проверяем, если сообщение создано по нажатию кнопки Назад
+    # Это не сработает напрямую, так как inline кнопки не посылают новые сообщения
+    # Но оставляем для совместимости
+    if message.text and message.text.strip() == "◀️ Назад":
+        return
+
+    # Проверяем, является ли сообщение командой или другим служебным действием
+    if hasattr(message, "content_type") and message.content_type != "text":
+        return
+
+    # Проверяем, нет ли уже процесса расчета для этого пользователя
+    user_id = message.from_user.id
+    if (
+        user_id in user_data
+        and "processing" in user_data[user_id]
+        and user_data[user_id]["processing"]
+    ):
+        return
+
     try:
+        # Защита от двойной обработки
+        user_data[user_id]["processing"] = True
+
         # Удаляем пробелы из введенной строки перед преобразованием в число
         car_price = int(message.text.strip().replace(" ", ""))
-        user_id = message.from_user.id
 
         if (
             user_id in user_data
             and "manual_age" in user_data[user_id]
             and "engine_volume" in user_data[user_id]
         ):
+            # Очищаем предыдущие меню
+            clear_previous_menus(message.chat.id, user_id)
+
             # Выполняем расчёт
             calculate_manual_cost(
                 user_data[user_id]["manual_age"],
@@ -1424,6 +1827,10 @@ def process_manual_car_price(message):
             "Пожалуйста, введите корректное числовое значение стоимости:",
         )
         bot.register_next_step_handler(msg, process_manual_car_price)
+    finally:
+        # Снимаем флаг обработки
+        if user_id in user_data and "processing" in user_data[user_id]:
+            user_data[user_id]["processing"] = False
 
 
 def calculate_manual_cost(age, engine_volume, car_price, message):
@@ -1556,6 +1963,73 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
     finally:
         # Удаляем сообщение о процессе расчёта
         bot.delete_message(message.chat.id, processing_message.message_id)
+
+
+def clear_user_step_data(user_id, step=None):
+    """
+    Очищает данные пользователя для указанного шага или всех шагов
+
+    :param user_id: ID пользователя
+    :param step: Шаг, данные которого нужно очистить (если None, очищает все данные)
+    """
+    if user_id not in user_data:
+        return
+
+    if step is None:
+        # Очищаем все данные, кроме имени и телефона
+        if "name" in user_data[user_id]:
+            name = user_data[user_id]["name"]
+            phone = user_data[user_id].get("phone", "")
+            user_data[user_id] = {"name": name}
+            if phone:
+                user_data[user_id]["phone"] = phone
+        else:
+            # Если нет важных данных, очищаем всё
+            user_data[user_id] = {}
+    elif step == "engine_volume" and "engine_volume" in user_data[user_id]:
+        # Очищаем данные об объёме двигателя
+        del user_data[user_id]["engine_volume"]
+    elif step == "car_price" and "car_price" in user_data[user_id]:
+        # Очищаем данные о цене автомобиля
+        del user_data[user_id]["car_price"]
+
+
+def clear_previous_menus(chat_id, user_id):
+    """
+    Удаляет предыдущие сообщения с меню у пользователя
+
+    :param chat_id: ID чата
+    :param user_id: ID пользователя
+    """
+    global user_last_menu
+
+    if user_id in user_last_menu:
+        # Удаляем все предыдущие сообщения с меню
+        for msg_id in user_last_menu[user_id]:
+            try:
+                bot.delete_message(chat_id, msg_id)
+            except Exception as e:
+                logging.error(f"Ошибка при удалении сообщения {msg_id}: {e}")
+
+        # Очищаем список сообщений
+        user_last_menu[user_id] = []
+
+
+def cancel_application(chat_id, user_id):
+    """Функция для отмены заявки и возврата в главное меню"""
+    if user_id in user_data:
+        # Удаляем данные пользователя
+        user_data.pop(user_id, None)
+
+    # Очищаем предыдущие меню
+    clear_previous_menus(chat_id, user_id)
+
+    # Отправляем сообщение о том, что заявка отменена
+    bot.send_message(
+        chat_id,
+        "🚫 Заявка отменена. Вы можете выбрать другое действие.",
+        reply_markup=main_menu(),
+    )
 
 
 # Run the bot
