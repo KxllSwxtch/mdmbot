@@ -247,6 +247,7 @@ def main_menu():
         types.KeyboardButton("Instagram"),
         types.KeyboardButton("Tik-Tok"),
     )
+    keyboard.add(types.KeyboardButton("Наш сайт", url="https://mdmgroupkr.com/"))
     return keyboard
 
 
