@@ -247,7 +247,7 @@ def main_menu():
         types.KeyboardButton("Instagram"),
         types.KeyboardButton("Tik-Tok"),
     )
-    keyboard.add(types.KeyboardButton("Наш сайт", url="https://mdmgroupkr.com/"))
+    keyboard.add(types.KeyboardButton("Наш сайт"))
     return keyboard
 
 
@@ -1244,6 +1244,12 @@ def handle_message(message):
     elif user_message == "О нас":
         about_message = "MDM GROUP\nЮжнокорейская экспортная компания.\nСпециализируемся на поставках автомобилей из Южной Кореи в страны СНГ.\nОпыт работы более 5 лет.\n\nПочему выбирают нас?\n• Надежность и скорость доставки.\n• Индивидуальный подход к каждому клиенту.\n• Полное сопровождение сделки.\n\n💬 Ваш путь к надежным автомобилям начинается здесь!"
         bot.send_message(message.chat.id, about_message)
+
+    elif user_message == "Наш сайт":
+        bot.send_message(
+            message.chat.id,
+            "Посетите наш сайт: https://mdmgroupkr.com/",
+        )
 
     elif user_message == "Telegram-канал":
         channel_link = "https://t.me/mdmgroupkorea"
