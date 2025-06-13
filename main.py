@@ -75,6 +75,7 @@ vehicle_no = None
 
 # Глобальные переменные для сбора данных пользователя
 user_data = {}
+rub_krw_rate = 0  # Добавляем глобальную переменную для курса RUB/KRW
 
 
 def is_valid_phone(phone):
@@ -161,7 +162,7 @@ def get_currency_rates():
         price_element = soup.select_one("strong.price em")
         if price_element:
             krw_rate_text = price_element.text.strip().replace(",", "")
-            krw = float(krw_rate_text) - 10
+            krw = float(krw_rate_text) - 15
 
             # Устанавливаем глобальные переменные
             usd_rate = 1.0  # USDT курс к доллару 1:1
@@ -180,7 +181,7 @@ def get_currency_rates():
 # Обработчик команды /cbr
 @bot.message_handler(commands=["cbr"])
 def cbr_command(message):
-    global usdt_rub_rate
+    global usdt_rub_rate, rub_krw_rate
 
     user_id = message.from_user.id
 
@@ -214,6 +215,15 @@ def cbr_command(message):
         except Exception as e:
             print_message(f"Ошибка при получении курса USDT/RUB: {e}")
             rates_text += "\nНе удалось получить курс USDT/RUB"
+
+        # Получаем банковский курс RUB/KRW
+        try:
+            get_rub_krw_rate()
+            if rub_krw_rate > 0:
+                rates_text += f"\nRUB/KRW (банк): <b>{rub_krw_rate:.2f} ₩</b>"
+        except Exception as e:
+            print_message(f"Ошибка при получении курса RUB/KRW: {e}")
+            rates_text += "\nНе удалось получить банковский курс RUB/KRW"
 
         # Создаем клавиатуру с кнопкой для расчета автомобиля
         keyboard = types.InlineKeyboardMarkup()
@@ -482,6 +492,66 @@ def send_error_message(message, error_text):
     logging.error(f"Error sent to user {message.chat.id}: {error_text}")
 
 
+def extract_manufacturing_date(response):
+    """
+    Извлекает дату производства автомобиля из различных полей API ответа
+
+    Args:
+        response: JSON ответ от API encar
+
+    Returns:
+        str: Дата производства в формате "YYYY.MM" или сообщение для уточнения
+    """
+    import re
+
+    # Список полей для поиска даты производства
+    search_fields = []
+
+    # Добавляем oneLineText если есть
+    if "advertisement" in response and "oneLineText" in response["advertisement"]:
+        search_fields.append(response["advertisement"]["oneLineText"])
+
+    # Добавляем text из contents если есть
+    if "contents" in response and "text" in response["contents"]:
+        search_fields.append(response["contents"]["text"])
+
+    # Паттерны для поиска даты производства
+    patterns = [
+        # Формат: 2022.02 made
+        r"(\d{4})\.(\d{1,2})\s*made",
+        # Формат: made22-5-21 или made 22-5-21
+        r"made\s*(\d{2})-(\d{1,2})-(\d{1,2})",
+        # Формат: made 2022/ 5/21 или made2022/5/21
+        r"made\s*(\d{4})/\s*(\d{1,2})/\s*(\d{1,2})",
+        # Формат: made 2022/5 или made2022/5
+        r"made\s*(\d{4})/\s*(\d{1,2})(?!/)",
+    ]
+
+    for field_text in search_fields:
+        if not field_text:
+            continue
+
+        for pattern in patterns:
+            matches = re.findall(pattern, field_text, re.IGNORECASE)
+            if matches:
+                match = matches[0]
+
+                if len(match) == 2:  # Формат YYYY.MM или YYYY/MM
+                    year, month = match
+                    if len(year) == 2:  # Если год в формате YY
+                        year = f"20{year}"
+                    return f"{year}.{month.zfill(2)}"
+
+                elif len(match) == 3:  # Формат YY-M-D или YYYY/M/D
+                    year, month, day = match
+                    if len(year) == 2:  # Если год в формате YY
+                        year = f"20{year}"
+                    return f"{year}.{month.zfill(2)}"
+
+    # Если дата производства не найдена
+    return "По поводу даты производства уточняйте у менеджеров"
+
+
 def get_car_info(url):
     global car_id_external, vehicle_no, vehicle_id, car_year, car_month
 
@@ -528,6 +598,9 @@ def get_car_info(url):
     car_engine_displacement = str(response["spec"]["displacement"])
     car_type = response["spec"]["bodyName"]
 
+    # Извлекаем дату производства
+    manufacturing_date = extract_manufacturing_date(response)
+
     # Список фотографий (берем первые 10)
     car_photos = [
         generate_encar_photo_url(photo["path"]) for photo in response["photos"][:10]
@@ -543,7 +616,7 @@ def get_car_info(url):
     formatted_car_type = "crossover" if car_type == "SUV" else "sedan"
 
     print_message(
-        f"ID: {car_id}\nType: {formatted_car_type}\nDate: {formatted_car_date}\nCar Engine Displacement: {car_engine_displacement}\nPrice: {car_price} KRW"
+        f"ID: {car_id}\nType: {formatted_car_type}\nDate: {formatted_car_date}\nCar Engine Displacement: {car_engine_displacement}\nPrice: {car_price} KRW\nManufacturing Date: {manufacturing_date}"
     )
 
     return [
@@ -556,18 +629,20 @@ def get_car_info(url):
         car_photos,
         year,
         month,
+        manufacturing_date,  # Добавляем дату производства
     ]
 
 
 # Function to calculate the total cost
 def calculate_cost(link, message):
-    global car_data, car_id_external, car_month, car_year, usdt_krw_rate, usdt_rub_rate, usd_rate
+    global car_data, car_id_external, car_month, car_year, usdt_krw_rate, usdt_rub_rate, usd_rate, rub_krw_rate
 
     print_message("ЗАПРОС НА РАСЧЁТ АВТОМОБИЛЯ")
 
     # Получаем актуальный курс валют
     get_usdt_to_rub_rate()
     get_currency_rates()
+    get_rub_krw_rate()  # Получаем банковский курс RUB/KRW
 
     # Отправляем сообщение и сохраняем его ID
     processing_message = bot.send_message(
@@ -603,6 +678,7 @@ def calculate_cost(link, message):
         car_photos,
         year,
         month,
+        manufacturing_date,
     ) = result
 
     if not car_price and car_engine_displacement and formatted_car_date:
@@ -644,16 +720,55 @@ def calculate_cost(link, message):
             )
         )
 
-        # Конвертируем стоимость авто в рубли
+        # Конвертируем стоимость авто в рубли через USDT
         price_krw = int(car_price) * 10000
         price_usdt = int(price_krw) / usdt_krw_rate
-        price_rub = int(price_usdt) * usdt_rub_rate
+        price_rub_usdt = int(price_usdt) * usdt_rub_rate
+
+        # Конвертируем стоимость авто в рубли через банковский курс
+        price_rub_bank = int(price_krw) / rub_krw_rate if rub_krw_rate > 0 else 0
+
+        # Определяем какую дату использовать для расчёта таможенных платежей
+        # Если есть дата производства, используем её, иначе дату первой регистрации
+        if manufacturing_date != "По поводу даты производства уточняйте у менеджеров":
+            # Парсим дату производства (формат YYYY.MM)
+            try:
+                date_match = re.match(r"(\d{4})\.(\d{1,2})", manufacturing_date)
+                if date_match:
+                    customs_year = int(date_match.group(1))
+                    customs_month = date_match.group(2).zfill(
+                        2
+                    )  # Добавляем ведущий ноль если нужно
+                    print_message(
+                        f"Используем дату производства для таможенных расчётов: {customs_year}/{customs_month}"
+                    )
+                else:
+                    # Если не удалось распарсить дату производства, используем дату регистрации
+                    customs_year = int(f"20{car_year}")
+                    customs_month = car_month
+                    print_message(
+                        f"Не удалось распарсить дату производства, используем дату регистрации: {customs_year}/{customs_month}"
+                    )
+            except Exception as e:
+                # В случае ошибки используем дату регистрации
+                customs_year = int(f"20{car_year}")
+                customs_month = car_month
+                print_message(
+                    f"Ошибка при обработке даты производства: {e}. Используем дату регистрации: {customs_year}/{customs_month}"
+                )
+        else:
+            # Используем дату первой регистрации
+            customs_year = int(f"20{car_year}")
+            customs_month = car_month
+            print_message(
+                f"Дата производства недоступна, используем дату регистрации: {customs_year}/{customs_month}"
+            )
 
         response = get_customs_fees(
             car_engine_displacement,
             price_krw,
-            int(f"20{car_year}"),
-            car_month,
+            customs_year,
+            customs_month,
             engine_type=1,
         )
 
@@ -662,15 +777,29 @@ def calculate_cost(link, message):
         customs_duty = clean_number(response["tax"])
         recycling_fee = clean_number(response["util"])
 
-        # Расчет итоговой стоимости автомобиля в рублях
-        total_cost = (
-            price_rub  # Стоимость автомобиля в рублях
+        # Расчет итоговой стоимости автомобиля в рублях (USDT)
+        total_cost_usdt = (
+            price_rub_usdt  # Стоимость автомобиля в рублях через USDT
             + customs_fee  # Таможенный сбор
             + customs_duty  # Таможенная пошлина
             + recycling_fee  # Утилизационный сбор
             + 100000  # ФРАХТ
             + 100000  # Брокерские услуги
         )
+
+        total_cost_usdt_to_moscow = total_cost_usdt + 220000
+
+        # Расчет итоговой стоимости автомобиля в рублях (банк)
+        total_cost_bank = (
+            price_rub_bank  # Стоимость автомобиля в рублях через банк
+            + customs_fee  # Таможенный сбор
+            + customs_duty  # Таможенная пошлина
+            + recycling_fee  # Утилизационный сбор
+            + 100000  # ФРАХТ
+            + 100000  # Брокерские услуги
+        )
+
+        total_cost_bank_to_moscow = total_cost_bank + 220000
 
         car_data["freight_rub"] = 100000
         car_data["freight_usdt"] = 1000
@@ -690,38 +819,51 @@ def calculate_cost(link, message):
         preview_link = f"https://fem.encar.com/cars/detail/{car_id}"
 
         # Формирование сообщения результата
+        currency_rates_text = f"💱 Актуальные курсы валют:\nUSDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\nUSDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>"
+        if rub_krw_rate > 0:
+            currency_rates_text += f"\nRUB/KRW: <b>{rub_krw_rate:.2f} ₩</b>"
+
         result_message = (
             f"🚗 <b>{car_title}</b>\n\n"
             f"📅 Возраст: {age_formatted} (дата регистрации: {month}/{year})\n"
+            f"🏭 Дата производства: {manufacturing_date}\n"
             f"🛣️ Пробег: {formatted_mileage}\n"
             f"🔧 Объём двигателя: {engine_volume_formatted}\n"
             f"⚙️ КПП: {formatted_transmission}\n\n"
-            f"💱 Актуальные курсы валют:\nUSDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\nUSDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>\n\n"
+            f"{currency_rates_text}\n\n"
             f"💰 <b>Стоимость:</b>\n"
-            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b> | <b>{format_number(price_rub)}</b> ₽\n\n"
-            f"• ФРАХТ:\n<b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
+            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b>\n"
+            f"USDT: <b>{format_number(price_rub_usdt)}</b> ₽"
+        )
+
+        if rub_krw_rate > 0:
+            result_message += f"\nБанк: <b>{format_number(price_rub_bank)}</b> ₽"
+
+        result_message += (
+            f"\n\n• ФРАХТ:\n<b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
             f"• Брокерские услуги:\n<b>{format_number(car_data['broker_rub'])}</b> ₽\n\n"
             f"📝 <b>Таможенные платежи:</b>\n"
             f"• Таможенный сбор:\n<b>{format_number(car_data['customs_fee_rub'])}</b> ₽\n\n"
             f"• Таможенная пошлина:\n<b>{format_number(car_data['customs_duty_rub'])}</b> ₽\n\n"
             f"• Утилизационный сбор:\n<b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
-            f"💵 <b>Итоговая стоимость под ключ до Владивостока:</b>\n"
-            f"<b>{format_number(total_cost)} ₽</b>\n\n"
-            f"🔗 <a href='{preview_link}'>Ссылка на автомобиль</a>\n\n"
+            f"💵 <b>Итоговая стоимость под ключ во Владивостоке:</b>\n"
+            f"USDT: <b>{format_number(total_cost_usdt)} ₽</b>"
+        )
+
+        if rub_krw_rate > 0:
+            result_message += f"\nБанк: <b>{format_number(total_cost_bank)} ₽</b>\n\n"
+
+        result_message += f"💵 <b>С доставкой до Москвы:</b>\n"
+        result_message += f"USDT: <b>{format_number(total_cost_usdt_to_moscow)} ₽</b>"
+        result_message += f"\nБанк: <b>{format_number(total_cost_bank_to_moscow)} ₽</b>"
+
+        result_message += (
+            f"\n\n🔗 <a href='{preview_link}'>Ссылка на автомобиль</a>\n\n"
             f"📢 <a href='https://t.me/mdmgroupkorea'>Официальный телеграм канал</a>\n"
         )
 
         # Клавиатура с дальнейшими действиями
         keyboard = types.InlineKeyboardMarkup()
-        # keyboard.add(
-        #     types.InlineKeyboardButton("Детали расчёта", callback_data="detail")
-        # )
-        # keyboard.add(
-        #     types.InlineKeyboardButton(
-        #         "Оставить заявку",
-        #         callback_data="",
-        #     )
-        # )
         keyboard.add(
             types.InlineKeyboardButton(
                 "Выплаты по ДТП",
@@ -1927,7 +2069,7 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
             f"• Таможенный сбор:\n<b>{format_number(car_data['customs_fee_rub'])}</b> ₽\n\n"
             f"• Таможенная пошлина:\n<b>{format_number(car_data['customs_duty_rub'])}</b> ₽\n\n"
             f"• Утилизационный сбор:\n<b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
-            f"💵 <b>Итоговая стоимость под ключ до Владивостока:</b>\n"
+            f"💵 <b>Итоговая стоимость под ключ во Владивостока:</b>\n"
             f"<b>{format_number(total_cost)} ₽</b>\n\n"
             f"📢 <a href='https://t.me/mdmgroupkorea'>Официальный телеграм канал</a>\n"
         )
@@ -2039,6 +2181,91 @@ def cancel_application(chat_id, user_id):
     )
 
 
+def get_rub_krw_rate():
+    """
+    Получает курс RUB/KRW с сайта Naver для банковских переводов
+    Ищет курс "송금 받을때" (получение перевода)
+    """
+    global rub_krw_rate
+
+    print_message("ПОЛУЧАЕМ КУРС RUB/KRW для банковских переводов")
+
+    try:
+        url = "https://search.naver.com/search.naver?sm=tab_hty.top&where=nexearch&ssc=tab.nx.all&query=rub+won"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        }
+
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Ищем select с option "송금 받을때" (data-param="u6=receive")
+        selects = soup.find_all("select")
+        target_select = None
+
+        for select in selects:
+            # Проверяем, есть ли option с data-param="u6=receive"
+            receive_option = select.find("option", {"data-param": "u6=receive"})
+            if receive_option and "송금 받을때" in receive_option.get_text():
+                target_select = select
+                break
+
+        if not target_select:
+            print_message("Не найден select с опцией '송금 받을때'")
+            return None
+
+        # Ищем ближайший элемент с курсом
+        # Поднимаемся по DOM дереву, чтобы найти контейнер с курсом
+        container = target_select.find_parent()
+        while container:
+            # Ищем div.num > div.recite > span с data-currency-unit="원"
+            rate_span = container.find("span", {"data-currency-unit": "원"})
+            if rate_span:
+                rate_text = rate_span.get_text().strip()
+                # Извлекаем числовое значение из строки типа "17.16 원"
+                import re
+
+                rate_match = re.search(r"(\d+\.?\d*)", rate_text)
+                if rate_match:
+                    rate_value = float(rate_match.group(1))
+                    # Отнимаем 0.5 пунктов согласно требованию
+                    rub_krw_rate = rate_value - 0.9
+                    print_message(
+                        f"Курс RUB/KRW (송금 받을때): {rate_value} -> {rub_krw_rate} (с учетом -0.5)"
+                    )
+                    return rub_krw_rate
+            container = container.find_parent()
+
+        # Если не нашли в структуре, пробуем альтернативный поиск
+        # Ищем все spans с data-currency-unit="원"
+        rate_spans = soup.find_all("span", {"data-currency-unit": "원"})
+        if rate_spans:
+            # Берем первый найденный курс (обычно это основной курс)
+            rate_text = rate_spans[0].get_text().strip()
+            import re
+
+            rate_match = re.search(r"(\d+\.?\d*)", rate_text)
+            if rate_match:
+                rate_value = float(rate_match.group(1))
+                # Отнимаем 0.5 пунктов согласно требованию
+                rub_krw_rate = rate_value - 0.5
+                print_message(
+                    f"Курс RUB/KRW (альтернативный поиск): {rate_value} -> {rub_krw_rate} (с учетом -0.5)"
+                )
+                return rub_krw_rate
+
+        print_message("Не удалось найти курс RUB/KRW")
+        return None
+
+    except Exception as e:
+        print_message(f"Ошибка при получении курса RUB/KRW: {e}")
+        return None
+
+
 # Run the bot
 if __name__ == "__main__":
     set_bot_commands()
@@ -2051,6 +2278,7 @@ if __name__ == "__main__":
         while True:
             try:
                 get_currency_rates()
+                get_rub_krw_rate()  # Добавляем обновление банковского курса
                 print_message("Курсы валют обновлены")
                 time.sleep(3600)  # Обновление каждый час (3600 секунд)
             except Exception as e:
@@ -2063,4 +2291,5 @@ if __name__ == "__main__":
 
     # Получаем начальные курсы при запуске
     get_currency_rates()
+    get_rub_krw_rate()  # Добавляем получение банковского курса при запуске
     bot.polling(non_stop=True)
