@@ -1985,13 +1985,14 @@ def process_manual_car_price(message):
 def calculate_manual_cost(age, engine_volume, car_price, message):
     """Функция расчёта стоимости по введённым вручную параметрам"""
 
-    global car_data, usdt_krw_rate, usdt_rub_rate
+    global car_data, usdt_krw_rate, usdt_rub_rate, rub_krw_rate
 
     print_message("ЗАПРОС НА РУЧНОЙ РАСЧЁТ АВТОМОБИЛЯ")
 
     # Получаем актуальный курс валют
     get_usdt_to_rub_rate()
     get_currency_rates()
+    get_rub_krw_rate()  # Получаем банковский курс RUB/KRW
 
     # Отправляем сообщение о том, что идёт расчёт
     processing_message = bot.send_message(
@@ -2011,10 +2012,13 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
         # Форматирование объёма двигателя для отображения
         engine_volume_formatted = f"{format_number(engine_volume)} cc"
 
-        # Расчёт стоимости в рублях
+        # Конвертируем стоимость авто в рубли через USDT
         price_krw = car_price
         price_usdt = int(price_krw) / usdt_krw_rate
-        price_rub = int(price_usdt) * usdt_rub_rate
+        price_rub_usdt = int(price_usdt) * usdt_rub_rate
+
+        # Конвертируем стоимость авто в рубли через банковский курс
+        price_rub_bank = int(price_krw) / rub_krw_rate if rub_krw_rate > 0 else 0
 
         # Получаем таможенные сборы
         from utils import get_customs_fees_manual
@@ -2030,15 +2034,29 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
         customs_duty = clean_number(response["tax"])
         recycling_fee = clean_number(response["util"])
 
-        # Расчет итоговой стоимости автомобиля в рублях
-        total_cost = (
-            price_rub  # Стоимость автомобиля в рублях
+        # Расчет итоговой стоимости автомобиля в рублях (USDT)
+        total_cost_usdt = (
+            price_rub_usdt  # Стоимость автомобиля в рублях через USDT
             + customs_fee  # Таможенный сбор
             + customs_duty  # Таможенная пошлина
             + recycling_fee  # Утилизационный сбор
             + 100000  # ФРАХТ
             + 100000  # Брокерские услуги
         )
+
+        total_cost_usdt_to_moscow = total_cost_usdt + 220000
+
+        # Расчет итоговой стоимости автомобиля в рублях (банк)
+        total_cost_bank = (
+            price_rub_bank  # Стоимость автомобиля в рублях через банк
+            + customs_fee  # Таможенный сбор
+            + customs_duty  # Таможенная пошлина
+            + recycling_fee  # Утилизационный сбор
+            + 100000  # ФРАХТ
+            + 100000  # Брокерские услуги
+        )
+
+        total_cost_bank_to_moscow = total_cost_bank + 220000
 
         car_data["freight_rub"] = 100000
         car_data["freight_usdt"] = 1000
@@ -2056,23 +2074,42 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
         car_data["util_fee_usdt"] = recycling_fee / usdt_rub_rate
 
         # Формирование сообщения результата
+        currency_rates_text = f"💱 Актуальные курсы валют:\nUSDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\nUSDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>"
+        if rub_krw_rate > 0:
+            currency_rates_text += f"\nRUB/KRW: <b>{rub_krw_rate:.2f} ₩</b>"
+
         result_message = (
             f"🚗 <b>Ручной расчёт автомобиля</b>\n\n"
             f"📅 Возраст: {age_formatted}\n"
             f"🔧 Объём двигателя: {engine_volume_formatted}\n\n"
-            f"💱 Актуальные курсы валют:\nUSDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\nUSDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>\n\n"
+            f"{currency_rates_text}\n\n"
             f"💰 <b>Стоимость:</b>\n"
-            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b> | <b>{format_number(price_rub)}</b> ₽\n\n"
-            f"• ФРАХТ:\n<b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
+            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b>\n"
+            f"USDT: <b>{format_number(price_rub_usdt)}</b> ₽"
+        )
+
+        if rub_krw_rate > 0:
+            result_message += f"\nБанк: <b>{format_number(price_rub_bank)}</b> ₽"
+
+        result_message += (
+            f"\n\n• ФРАХТ:\n<b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
             f"• Брокерские услуги:\n<b>{format_number(car_data['broker_rub'])}</b> ₽\n\n"
             f"📝 <b>Таможенные платежи:</b>\n"
             f"• Таможенный сбор:\n<b>{format_number(car_data['customs_fee_rub'])}</b> ₽\n\n"
             f"• Таможенная пошлина:\n<b>{format_number(car_data['customs_duty_rub'])}</b> ₽\n\n"
             f"• Утилизационный сбор:\n<b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
-            f"💵 <b>Итоговая стоимость под ключ во Владивостока:</b>\n"
-            f"<b>{format_number(total_cost)} ₽</b>\n\n"
-            f"📢 <a href='https://t.me/mdmgroupkorea'>Официальный телеграм канал</a>\n"
+            f"💵 <b>Итоговая стоимость под ключ во Владивостоке:</b>\n"
+            f"USDT: <b>{format_number(total_cost_usdt)} ₽</b>"
         )
+
+        if rub_krw_rate > 0:
+            result_message += f"\nБанк: <b>{format_number(total_cost_bank)} ₽</b>\n\n"
+
+        result_message += f"💵 <b>С доставкой до Москвы:</b>\n"
+        result_message += f"USDT: <b>{format_number(total_cost_usdt_to_moscow)} ₽</b>"
+        result_message += f"\nБанк: <b>{format_number(total_cost_bank_to_moscow)} ₽</b>"
+
+        result_message += f"\n\n📢 <a href='https://t.me/mdmgroupkorea'>Официальный телеграм канал</a>\n"
 
         # Клавиатура с дальнейшими действиями
         keyboard = types.InlineKeyboardMarkup()
