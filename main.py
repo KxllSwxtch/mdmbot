@@ -145,33 +145,64 @@ def get_currency_rates():
 
     print_message("ПОЛУЧАЕМ КУРС USDT/KRW")
 
-    # Получаем курс USDT/KRW с Naver
+    # Получаем курс USDT/KRW с API Naver
     try:
-        usdt_krw_url = "https://search.naver.com/search.naver?sm=tab_hty.top&where=nexearch&ssc=tab.nx.all&query=USDT"
+        url = "https://m.search.naver.com/p/csearch/content/qapirender.nhn"
+
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "accept-language": "en,ru;q=0.9,en-CA;q=0.8,la;q=0.7,fr;q=0.6,ko;q=0.5",
+            "origin": "https://search.naver.com",
+            "priority": "u=1, i",
+            "referer": "https://search.naver.com/",
+            "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
         }
-        naver_response = requests.get(usdt_krw_url, headers=headers)
 
-        # Используем BeautifulSoup для парсинга HTML
-        from bs4 import BeautifulSoup
+        params = {
+            "key": "calculator",
+            "pkid": "141",
+            "q": "환율",
+            "where": "m",
+            "u1": "keb",
+            "u6": "standardUnit",
+            "u7": "0",
+            "u3": "USDT",
+            "u4": "KRW",
+            "u8": "down",
+            "u2": "1",
+        }
 
-        soup = BeautifulSoup(naver_response.text, "html.parser")
+        response = requests.get(url, params=params, headers=headers)
+        response.raise_for_status()
 
-        # Извлекаем значение курса из strong.price
-        price_element = soup.select_one("strong.price em")
-        if price_element:
-            krw_rate_text = price_element.text.strip().replace(",", "")
-            krw = float(krw_rate_text) - 15
+        data = response.json()
+
+        # Извлекаем курс из ответа
+        if "country" in data and len(data["country"]) >= 2:
+            # Берем курс из второго элемента массива country (индекс 1)
+            rate_text = data["country"][1]["value"]
+            # Убираем запятые и конвертируем в float
+            rate_value = float(rate_text.replace(",", ""))
+
+            # Прибавляем 10 пунктов согласно требованию
+            usdt_krw_rate = rate_value + 10
 
             # Устанавливаем глобальные переменные
             usd_rate = 1.0  # USDT курс к доллару 1:1
-            usdt_krw_rate = krw
 
-            rates_text = f"USDT/KRW: <b>{krw:.2f} ₩</b>"
+            rates_text = f"USDT/KRW: <b>{usdt_krw_rate:.2f} ₩</b>"
+            print_message(
+                f"Курс USDT/KRW (API): {rate_value} -> {usdt_krw_rate} (с учетом +10)"
+            )
             return rates_text
         else:
-            print_message("Не удалось получить курс USDT/KRW с Naver")
+            print_message("Неверная структура ответа API")
             return "Не удалось получить курс USDT/KRW"
     except Exception as e:
         print_message(f"Ошибка при получении курса USDT/KRW: {e}")
@@ -2220,83 +2251,65 @@ def cancel_application(chat_id, user_id):
 
 def get_rub_krw_rate():
     """
-    Получает курс RUB/KRW с сайта Naver для банковских переводов
-    Ищет курс "송금 받을때" (получение перевода)
+    Получает курс RUB/KRW с API Naver для банковских переводов
+    Использует курс "송금 받을때" (получение перевода)
     """
     global rub_krw_rate
 
     print_message("ПОЛУЧАЕМ КУРС RUB/KRW для банковских переводов")
 
     try:
-        url = "https://search.naver.com/search.naver?sm=tab_hty.top&where=nexearch&ssc=tab.nx.all&query=rub+won"
+        url = "https://m.search.naver.com/p/csearch/content/qapirender.nhn"
+
         headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "accept-language": "en,ru;q=0.9,en-CA;q=0.8,la;q=0.7,fr;q=0.6,ko;q=0.5",
+            "origin": "https://search.naver.com",
+            "priority": "u=1, i",
+            "referer": "https://search.naver.com/",
+            "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
         }
 
-        response = requests.get(url, headers=headers)
+        params = {
+            "key": "calculator",
+            "pkid": "141",
+            "q": "환율",
+            "where": "m",
+            "u1": "keb",
+            "u6": "receive",
+            "u7": "0",
+            "u3": "RUB",
+            "u4": "KRW",
+            "u8": "down",
+            "u2": "1",
+        }
+
+        response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
 
-        from bs4 import BeautifulSoup
+        data = response.json()
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        # Извлекаем курс из ответа
+        if "country" in data and len(data["country"]) >= 2:
+            # Берем курс из второго элемента массива country (индекс 1)
+            rate_value = float(data["country"][1]["value"])
 
-        # Ищем select с option "송금 받을때" (data-param="u6=receive")
-        selects = soup.find_all("select")
-        target_select = None
+            # Отнимаем 0.5 пунктов согласно требованию
+            rub_krw_rate = rate_value - 0.5
 
-        for select in selects:
-            # Проверяем, есть ли option с data-param="u6=receive"
-            receive_option = select.find("option", {"data-param": "u6=receive"})
-            if receive_option and "송금 받을때" in receive_option.get_text():
-                target_select = select
-                break
-
-        if not target_select:
-            print_message("Не найден select с опцией '송금 받을때'")
+            print_message(
+                f"Курс RUB/KRW (API): {rate_value} -> {rub_krw_rate} (с учетом -0.5)"
+            )
+            return rub_krw_rate
+        else:
+            print_message("Неверная структура ответа API")
             return None
-
-        # Ищем ближайший элемент с курсом
-        # Поднимаемся по DOM дереву, чтобы найти контейнер с курсом
-        container = target_select.find_parent()
-        while container:
-            # Ищем div.num > div.recite > span с data-currency-unit="원"
-            rate_span = container.find("span", {"data-currency-unit": "원"})
-            if rate_span:
-                rate_text = rate_span.get_text().strip()
-                # Извлекаем числовое значение из строки типа "17.16 원"
-                import re
-
-                rate_match = re.search(r"(\d+\.?\d*)", rate_text)
-                if rate_match:
-                    rate_value = float(rate_match.group(1))
-                    # Отнимаем 0.5 пунктов согласно требованию
-                    rub_krw_rate = rate_value - 0.9
-                    print_message(
-                        f"Курс RUB/KRW (송금 받을때): {rate_value} -> {rub_krw_rate} (с учетом -0.5)"
-                    )
-                    return rub_krw_rate
-            container = container.find_parent()
-
-        # Если не нашли в структуре, пробуем альтернативный поиск
-        # Ищем все spans с data-currency-unit="원"
-        rate_spans = soup.find_all("span", {"data-currency-unit": "원"})
-        if rate_spans:
-            # Берем первый найденный курс (обычно это основной курс)
-            rate_text = rate_spans[0].get_text().strip()
-            import re
-
-            rate_match = re.search(r"(\d+\.?\d*)", rate_text)
-            if rate_match:
-                rate_value = float(rate_match.group(1))
-                # Отнимаем 0.5 пунктов согласно требованию
-                rub_krw_rate = rate_value - 0.5
-                print_message(
-                    f"Курс RUB/KRW (альтернативный поиск): {rate_value} -> {rub_krw_rate} (с учетом -0.5)"
-                )
-                return rub_krw_rate
-
-        print_message("Не удалось найти курс RUB/KRW")
-        return None
 
     except Exception as e:
         print_message(f"Ошибка при получении курса RUB/KRW: {e}")
