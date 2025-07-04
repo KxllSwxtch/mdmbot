@@ -143,9 +143,9 @@ def get_usdt_to_rub_rate():
 def get_currency_rates():
     global usd_rate, usdt_krw_rate
 
-    print_message("ПОЛУЧАЕМ КУРС USDT/KRW")
+    print_message("ПОЛУЧАЕМ КУРС USD/KRW")
 
-    # Получаем курс USDT/KRW с API Naver
+    # Получаем курс USD/KRW с API Naver
     try:
         url = "https://m.search.naver.com/p/csearch/content/qapirender.nhn"
 
@@ -172,7 +172,7 @@ def get_currency_rates():
             "u1": "keb",
             "u6": "standardUnit",
             "u7": "0",
-            "u3": "USDT",
+            "u3": "USD",
             "u4": "KRW",
             "u8": "down",
             "u2": "1",
@@ -190,22 +190,22 @@ def get_currency_rates():
             # Убираем запятые и конвертируем в float
             rate_value = float(rate_text.replace(",", ""))
 
-            # Прибавляем 10 пунктов согласно требованию
+            # Прибавляем 10 пунктов согласно требованию (используем USD курс как базу для USDT)
             usdt_krw_rate = rate_value + 10
 
             # Устанавливаем глобальные переменные
-            usd_rate = 1.0  # USDT курс к доллару 1:1
+            usd_rate = 1.0  # USD курс к доллару 1:1
 
             rates_text = f"USDT/KRW: <b>{usdt_krw_rate:.2f} ₩</b>"
             print_message(
-                f"Курс USDT/KRW (API): {rate_value} -> {usdt_krw_rate} (с учетом +10)"
+                f"Курс USD/KRW (API): {rate_value} -> USDT/KRW: {usdt_krw_rate} (с учетом +10)"
             )
             return rates_text
         else:
             print_message("Неверная структура ответа API")
-            return "Не удалось получить курс USDT/KRW"
+            return "Не удалось получить курс USD/KRW"
     except Exception as e:
-        print_message(f"Ошибка при получении курса USDT/KRW: {e}")
+        print_message(f"Ошибка при получении курса USD/KRW: {e}")
         return "Ошибка при получении курса валют"
 
 
