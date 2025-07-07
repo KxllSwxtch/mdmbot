@@ -6,10 +6,8 @@ import locale
 import logging
 import urllib.parse
 import json
-import phonenumbers
 
 
-from amocrm.v2 import Lead, custom_field, tokens, Contact
 from io import BytesIO
 from telebot import types
 from dotenv import load_dotenv
@@ -62,10 +60,11 @@ total_car_price = 0
 usdt_krw_rate = 0
 usdt_rub_rate = 0
 usd_rate = 0
+usd_krw_rate = 0
 users = set()
 
 admins = []
-CHANNEL_USERNAME = "@mdmgroupkorea"  # Юзернейм канала
+
 
 car_month = None
 car_year = None
@@ -73,19 +72,27 @@ car_year = None
 vehicle_id = None
 vehicle_no = None
 
-# Глобальные переменные для сбора данных пользователя
-user_data = {}
 rub_krw_rate = 0  # Добавляем глобальную переменную для курса RUB/KRW
 
+# Глобальные переменные для ручного расчёта
+manual_calc_data = {}
 
-def is_valid_phone(phone):
-    try:
-        parsed = phonenumbers.parse(phone, None)
-        return phonenumbers.is_possible_number(parsed) and phonenumbers.is_valid_number(
-            parsed
-        )
-    except phonenumbers.NumberParseException:
-        return False
+
+def clear_previous_menus(chat_id, user_id):
+    """Очищает предыдущие меню пользователя"""
+    if user_id in user_last_menu:
+        for message_id in user_last_menu[user_id]:
+            try:
+                bot.delete_message(chat_id, message_id)
+            except Exception as e:
+                print(f"Ошибка при удалении сообщения {message_id}: {e}")
+        user_last_menu[user_id] = []
+
+
+def clear_user_step_data(user_id, step_key):
+    """Очищает данные определенного шага для пользователя"""
+    if user_id in manual_calc_data and step_key in manual_calc_data[user_id]:
+        del manual_calc_data[user_id][step_key]
 
 
 def print_message(message):
@@ -95,21 +102,12 @@ def print_message(message):
     return None
 
 
-def is_subscribed(user_id):
-    try:
-        chat_member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return chat_member.status in ["member", "administrator", "creator"]
-    except Exception as e:
-        print(f"Ошибка при проверке подписки: {e}")
-        return False  # Если ошибка, считаем, что не подписан
-
-
 # Функция для установки команд меню
 def set_bot_commands():
     commands = [
         types.BotCommand("start", "Запустить бота"),
-        types.BotCommand("cbr", "Курсы валют"),
-        # types.BotCommand("stats", "Статистика"),
+        types.BotCommand("stats", "Статистика"),
+        # types.BotCommand("cbr", "Курсы валют"),
     ]
     bot.set_my_commands(commands)
 
@@ -128,7 +126,7 @@ def get_usdt_to_rub_rate():
         usdt_rub_rate = float(data["data"]["amount"])
 
         # Округляем до двух знаков после запятой и добавляем 2 рубля
-        usdt_rub_rate = round(usdt_rub_rate, 2) + 2
+        usdt_rub_rate = round(usdt_rub_rate, 2) - 10
 
         # Вычисляем курс рубля к воне через курс USDT
 
@@ -208,32 +206,77 @@ def get_currency_rates():
         return "Ошибка при получении курса валют"
 
 
+# Функция для получения курса USD/KRW с API
+def get_usd_krw_rate():
+    global usd_krw_rate
+
+    print_message("ПОЛУЧАЕМ КУРС USD/KRW")
+
+    try:
+        headers = {
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "accept-language": "en,ru;q=0.9,en-CA;q=0.8,la;q=0.7,fr;q=0.6,ko;q=0.5",
+            "origin": "https://search.naver.com",
+            "priority": "u=1, i",
+            "referer": "https://search.naver.com/",
+            "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+        }
+
+        params = {
+            "key": "calculator",
+            "pkid": "141",
+            "q": "환율",
+            "where": "m",
+            "u1": "keb",
+            "u6": "standardUnit",
+            "u7": "0",
+            "u3": "USD",
+            "u4": "KRW",
+            "u8": "down",
+            "u2": "1",
+        }
+
+        response = requests.get(
+            "https://m.search.naver.com/p/csearch/content/qapirender.nhn",
+            params=params,
+            headers=headers,
+        )
+        response.raise_for_status()
+
+        # Парсим JSON ответ
+        data = response.json()
+
+        # Извлекаем значение курса
+        if data and "country" in data and len(data["country"]) >= 2:
+            krw_value = data["country"][1]["value"]
+            # Убираем запятые и конвертируем в float
+            krw = float(krw_value.replace(",", ""))
+            # Добавляем 10 к курсу
+            krw = krw + 10
+
+            # Устанавливаем глобальную переменную
+            usd_krw_rate = krw
+
+            print_message(f"Курс USD/KRW: {krw:.2f} ₩")
+            return krw
+        else:
+            print_message("Не удалось получить курс USD/KRW из ответа API")
+            return None
+    except Exception as e:
+        print_message(f"Ошибка при получении курса USD/KRW: {e}")
+        return None
+
+
 # Обработчик команды /cbr
 @bot.message_handler(commands=["cbr"])
 def cbr_command(message):
     global usdt_rub_rate, rub_krw_rate
-
-    user_id = message.from_user.id
-
-    if not is_subscribed(user_id):
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "🔗 Подписаться", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "🔄 Проверить подписку", callback_data="check_subscription"
-            )
-        )
-
-        bot.send_message(
-            message.chat.id,
-            f"🚫 Доступ ограничен! Подпишитесь на наш канал {CHANNEL_USERNAME}, чтобы пользоваться ботом.",
-            reply_markup=keyboard,
-        )
-        return  # Прерываем выполнение, если не подписан
 
     try:
         rates_text = get_currency_rates()
@@ -281,228 +324,34 @@ def main_menu():
         types.KeyboardButton(CALCULATE_CAR_TEXT), types.KeyboardButton("Ручной расчёт")
     )
     keyboard.add(
-        types.KeyboardButton("Написать менеджеру"),
-        types.KeyboardButton("О нас"),
+        # types.KeyboardButton("О нас"),
         types.KeyboardButton("Telegram-канал"),
+    )
+    keyboard.add(
         types.KeyboardButton("Instagram"),
+        types.KeyboardButton("ВКонтакте"),
         types.KeyboardButton("Tik-Tok"),
     )
     keyboard.add(types.KeyboardButton("Наш сайт"))
     return keyboard
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
-def check_subscription(call):
-    user_id = call.from_user.id
-
-    if is_subscribed(user_id):
-        bot.answer_callback_query(call.id, "✅ Вы подписаны!")
-        bot.send_message(
-            call.message.chat.id,
-            "✅ Спасибо за подписку! Теперь вы можете пользоваться ботом.",
-            reply_markup=main_menu(),
-        )
-    else:
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "🔗 Подписаться", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "🔄 Проверить подписку", callback_data="check_subscription"
-            )
-        )
-
-        bot.send_message(
-            call.message.chat.id,
-            "🚫 Вы ещё не подписались! Подпишитесь и нажмите кнопку 🔄 Проверить подписку.",
-            reply_markup=keyboard,
-        )
-
-
 # Start command handler
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
-    user_id = message.from_user.id
-
-    if not is_subscribed(user_id):
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "🔗 Подписаться", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "🔄 Проверить подписку", callback_data="check_subscription"
-            )
-        )
-
-        bot.send_message(
-            message.chat.id,
-            f"🚫 Доступ ограничен! Подпишитесь на наш канал {CHANNEL_USERNAME}, чтобы пользоваться ботом.",
-            reply_markup=keyboard,
-        )
-        return  # Прерываем выполнение, если не подписан
-
     get_currency_rates()
 
-    # Отправляем приветственное видео
-    video_url = "https://res.cloudinary.com/dazj4gjli/video/upload/v1744443895/IMG_9266_guzqka.mp4"
-    bot.send_video(message.chat.id, video_url)
+    # Отправляем логотип
+    with open("logo.png", "rb") as logo:
+        bot.send_photo(message.chat.id, logo)
 
     user_first_name = message.from_user.first_name
     welcome_message = (
         f"Здравствуйте, {user_first_name}!\n\n"
-        "Я бот компании MDM GROUP. Я помогу вам рассчитать стоимость понравившегося вам автомобиля из Южной Кореи до Владивостока.\n\n"
+        "Я бот компании IntelGo. Я помогу вам рассчитать стоимость понравившегося вам автомобиля из Южной Кореи до Москвы.\n\n"
         "Выберите действие из меню ниже."
     )
     bot.send_message(message.chat.id, welcome_message, reply_markup=main_menu())
-
-
-# Обработчики для специфических callback запросов, размещаем их перед основным обработчиком
-@bot.callback_query_handler(func=lambda call: call.data == "cancel_application")
-def handle_cancel_application(call):
-    """Обработчик для отмены заявки"""
-    bot.answer_callback_query(call.id, "Отменяем заявку")
-    cancel_application(call.message.chat.id, call.from_user.id)
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "back_to_name_step")
-def handle_back_to_name_step(call):
-    """Обработчик для возврата к вводу имени"""
-    bot.answer_callback_query(call.id, "Возвращаемся к вводу имени")
-
-    user_id = call.from_user.id
-    if user_id in user_data and "name" in user_data[user_id]:
-        # Очищаем предыдущие меню
-        clear_previous_menus(call.message.chat.id, user_id)
-
-        # Сохраняем шаг
-        user_data[user_id]["step"] = "waiting_name"
-
-        # Создаем клавиатуру с кнопкой отмены
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton(
-                "🚫 Отменить заявку", callback_data="cancel_application"
-            )
-        )
-
-        # Отправляем сообщение для ввода имени
-        msg = bot.send_message(
-            call.message.chat.id,
-            f"Пожалуйста, введите ваше ФИО:\n(Текущее значение: {user_data[user_id]['name']})",
-            reply_markup=markup,
-        )
-        bot.register_next_step_handler(msg, process_name_step)
-    else:
-        # Если данных нет, начинаем процесс заново
-        bot.send_message(
-            call.message.chat.id,
-            "Произошла ошибка. Начнем заново.",
-            reply_markup=main_menu(),
-        )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "back_to_phone_step")
-def handle_back_to_phone_step(call):
-    """Обработчик для возврата к вводу телефона"""
-    bot.answer_callback_query(call.id, "Возвращаемся к вводу телефона")
-
-    user_id = call.from_user.id
-    if user_id in user_data and "name" in user_data[user_id]:
-        # Очищаем предыдущие меню
-        clear_previous_menus(call.message.chat.id, user_id)
-
-        # Сохраняем шаг
-        user_data[user_id]["step"] = "waiting_phone"
-
-        # Создаем клавиатуру с кнопками навигации
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton("◀️ Назад", callback_data="back_to_name_step")
-        )
-        markup.add(
-            types.InlineKeyboardButton(
-                "🚫 Отменить заявку", callback_data="cancel_application"
-            )
-        )
-
-        # Показываем текущий телефон, если он есть
-        phone_text = (
-            f"\n(Текущее значение: {user_data[user_id]['phone']})"
-            if "phone" in user_data[user_id]
-            else ""
-        )
-
-        # Отправляем сообщение для ввода телефона
-        msg = bot.send_message(
-            call.message.chat.id,
-            f"Теперь введите ваш номер телефона:{phone_text}",
-            reply_markup=markup,
-        )
-        bot.register_next_step_handler(msg, process_phone_step)
-    else:
-        # Если данных нет, начинаем процесс заново
-        bot.send_message(
-            call.message.chat.id,
-            "Произошла ошибка. Начнем заново.",
-            reply_markup=main_menu(),
-        )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "back_to_budget_step")
-def handle_back_to_budget_step(call):
-    """Обработчик для возврата к вводу бюджета"""
-    bot.answer_callback_query(call.id, "Возвращаемся к вводу бюджета")
-
-    user_id = call.from_user.id
-    if (
-        user_id in user_data
-        and "name" in user_data[user_id]
-        and "phone" in user_data[user_id]
-    ):
-        # Очищаем предыдущие меню
-        clear_previous_menus(call.message.chat.id, user_id)
-
-        # Сохраняем шаг
-        user_data[user_id]["step"] = "waiting_budget"
-
-        # Создаем клавиатуру с кнопками навигации
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton("◀️ Назад", callback_data="back_to_phone_step")
-        )
-        markup.add(
-            types.InlineKeyboardButton(
-                "🚫 Отменить заявку", callback_data="cancel_application"
-            )
-        )
-
-        # Показываем текущий бюджет, если он есть
-        budget_text = (
-            f"\n(Текущее значение: {user_data[user_id]['budget']} ₽)"
-            if "budget" in user_data[user_id]
-            else ""
-        )
-
-        # Отправляем сообщение для ввода бюджета
-        msg = bot.send_message(
-            call.message.chat.id,
-            f"Введите ваш бюджет (в рублях):{budget_text}",
-            reply_markup=markup,
-        )
-        bot.register_next_step_handler(msg, process_budget_step)
-    else:
-        # Если данных нет, начинаем процесс заново
-        bot.send_message(
-            call.message.chat.id,
-            "Произошла ошибка. Начнем заново.",
-            reply_markup=main_menu(),
-        )
 
 
 # Error handling function
@@ -665,7 +514,7 @@ def get_car_info(url):
 
 # Function to calculate the total cost
 def calculate_cost(link, message):
-    global car_data, car_id_external, car_month, car_year, usdt_krw_rate, usdt_rub_rate, usd_rate, rub_krw_rate
+    global car_data, car_id_external, car_month, car_year, usdt_krw_rate, usdt_rub_rate, usd_rate, rub_krw_rate, usd_krw_rate
 
     print_message("ЗАПРОС НА РАСЧЁТ АВТОМОБИЛЯ")
 
@@ -673,11 +522,10 @@ def calculate_cost(link, message):
     get_usdt_to_rub_rate()
     get_currency_rates()
     get_rub_krw_rate()  # Получаем банковский курс RUB/KRW
+    get_usd_krw_rate()  # Получаем курс USD/KRW для фрахта
 
     # Отправляем сообщение и сохраняем его ID
-    processing_message = bot.send_message(
-        message.chat.id, "Обрабатываю данные. Пожалуйста подождите ⏳"
-    )
+    processing_message = bot.send_message(message.chat.id, "Пожалуйста подождите... ⏳")
 
     car_id = None
 
@@ -715,12 +563,6 @@ def calculate_cost(link, message):
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
             types.InlineKeyboardButton(
-                "Оставить заявку",
-                callback_data="add_crm_deal",
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
                 "Рассчитать стоимость другого автомобиля",
                 callback_data="calculate_another",
             )
@@ -750,13 +592,24 @@ def calculate_cost(link, message):
             )
         )
 
-        # Конвертируем стоимость авто в рубли через USDT
+        # Услуга компании
+        company_service_rub = 50000
+        company_service_usdt = company_service_rub / usdt_rub_rate
+
+        # Конвертируем стоимость авто в рубли через USDT (включая услугу компании)
         price_krw = int(car_price) * 10000
         price_usdt = int(price_krw) / usdt_krw_rate
-        price_rub_usdt = int(price_usdt) * usdt_rub_rate
+        price_rub_usdt = int(price_usdt) * usdt_rub_rate + company_service_rub
 
-        # Конвертируем стоимость авто в рубли через банковский курс
-        price_rub_bank = int(price_krw) / rub_krw_rate if rub_krw_rate > 0 else 0
+        # Добавляем услугу компании к USDT цене
+        price_usdt = price_usdt + company_service_usdt
+
+        # Конвертируем стоимость авто в рубли через банковский курс (включая услугу компании)
+        price_rub_bank = (
+            (int(price_krw) / rub_krw_rate + company_service_rub)
+            if rub_krw_rate > 0
+            else 0
+        )
 
         # Определяем какую дату использовать для расчёта таможенных платежей
         # Если есть дата производства, используем её, иначе дату первой регистрации
@@ -807,32 +660,50 @@ def calculate_cost(link, message):
         customs_duty = clean_number(response["tax"])
         recycling_fee = clean_number(response["util"])
 
+        # Расчет фрахта в рублях: $1000 -> воны -> рубли
+        freight_usd = 1000  # $1000
+        freight_krw = freight_usd * usd_krw_rate  # Переводим доллары в воны через USD/KRW курс
+        freight_rub_usdt = (
+            freight_krw / usdt_krw_rate * usdt_rub_rate
+        )  # Через USDT курс
+        freight_rub_bank = (
+            freight_krw / rub_krw_rate if rub_krw_rate > 0 else freight_rub_usdt
+        )  # Через банковский курс
+
+        car_data["freight_rub"] = (
+            freight_rub_bank  # Используем банковский курс для отображения
+        )
+        car_data["freight_usdt"] = freight_usd
+
+        # Сохраняем услугу компании в car_data для внутренних расчетов
+        car_data["company_service_rub"] = company_service_rub
+        car_data["company_service_usdt"] = company_service_usdt
+
         # Расчет итоговой стоимости автомобиля в рублях (USDT)
         total_cost_usdt = (
-            price_rub_usdt  # Стоимость автомобиля в рублях через USDT
+            price_rub_usdt  # Стоимость автомобиля в рублях через USDT (уже включает услугу компании)
             + customs_fee  # Таможенный сбор
             + customs_duty  # Таможенная пошлина
             + recycling_fee  # Утилизационный сбор
-            + 100000  # ФРАХТ
+            + freight_rub_usdt  # ФРАХТ через USDT
             + 100000  # Брокерские услуги
+            # Услуга компании уже включена в price_rub_usdt
         )
 
         total_cost_usdt_to_moscow = total_cost_usdt + 220000
 
         # Расчет итоговой стоимости автомобиля в рублях (банк)
         total_cost_bank = (
-            price_rub_bank  # Стоимость автомобиля в рублях через банк
+            price_rub_bank  # Стоимость автомобиля в рублях через банк (уже включает услугу компании)
             + customs_fee  # Таможенный сбор
             + customs_duty  # Таможенная пошлина
             + recycling_fee  # Утилизационный сбор
-            + 100000  # ФРАХТ
+            + freight_rub_bank  # ФРАХТ через банковский курс
             + 100000  # Брокерские услуги
+            # Услуга компании уже включена в price_rub_bank
         )
 
         total_cost_bank_to_moscow = total_cost_bank + 220000
-
-        car_data["freight_rub"] = 100000
-        car_data["freight_usdt"] = 1000
 
         car_data["broker_rub"] = 100000
         car_data["broker_usdt"] = 100000 / usdt_rub_rate
@@ -848,11 +719,24 @@ def calculate_cost(link, message):
 
         preview_link = f"https://fem.encar.com/cars/detail/{car_id}"
 
-        # Формирование сообщения результата
-        currency_rates_text = f"💱 Актуальные курсы валют:\nUSDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\nUSDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>"
-        if rub_krw_rate > 0:
-            currency_rates_text += f"\nRUB/KRW: <b>{rub_krw_rate:.2f} ₩</b>"
+        # Рассчитываем стоимости в долларах для USDT
+        car_price_usdt = price_usdt  # Стоимость авто в USDT
+        freight_usdt_dollars = car_data["freight_usdt"]  # 1000$
 
+        # Рассчитываем составные части для итоговых сумм
+        usdt_car_plus_freight = car_price_usdt + freight_usdt_dollars
+        customs_plus_broker_rub = (
+            customs_fee
+            + customs_duty
+            + recycling_fee
+            + car_data["broker_rub"]
+            # company_service_rub уже включен в цену автомобиля
+        )
+        customs_plus_broker_avtovoz_rub = (
+            customs_plus_broker_rub + 220000
+        )  # +автовоз до Москвы
+
+        # Формирование сообщения результата
         result_message = (
             f"🚗 <b>{car_title}</b>\n\n"
             f"📅 Возраст: {age_formatted} (дата регистрации: {month}/{year})\n"
@@ -860,36 +744,63 @@ def calculate_cost(link, message):
             f"🛣️ Пробег: {formatted_mileage}\n"
             f"🔧 Объём двигателя: {engine_volume_formatted}\n"
             f"⚙️ КПП: {formatted_transmission}\n\n"
-            f"{currency_rates_text}\n\n"
-            f"💰 <b>Стоимость:</b>\n"
-            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b>\n"
-            f"USDT: <b>{format_number(price_rub_usdt)}</b> ₽"
+            f"💱 Актуальные курсы валют:\n"
+            f"USDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\n"
         )
 
         if rub_krw_rate > 0:
-            result_message += f"\nБанк: <b>{format_number(price_rub_bank)}</b> ₽"
+            result_message += f"RUB/KRW: <b>₩{rub_krw_rate:.2f}</b>\n\n"
+        else:
+            result_message += "\n"
 
         result_message += (
-            f"\n\n• ФРАХТ:\n<b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
-            f"• Брокерские услуги:\n<b>{format_number(car_data['broker_rub'])}</b> ₽\n\n"
-            f"📝 <b>Таможенные платежи:</b>\n"
-            f"• Таможенный сбор:\n<b>{format_number(car_data['customs_fee_rub'])}</b> ₽\n\n"
-            f"• Таможенная пошлина:\n<b>{format_number(car_data['customs_duty_rub'])}</b> ₽\n\n"
-            f"• Утилизационный сбор:\n<b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
-            f"💵 <b>Итоговая стоимость под ключ во Владивостоке:</b>\n"
-            f"USDT: <b>{format_number(total_cost_usdt)} ₽</b>"
+            f"💰 Стоимость:\n"
+            f"• Цена авто: <b>₩{format_number(price_krw)}</b>\n"
+            f"USDT: <b>{format_number(price_usdt)}$</b>\n"
         )
 
         if rub_krw_rate > 0:
-            result_message += f"\nБанк: <b>{format_number(total_cost_bank)} ₽</b>\n\n"
-
-        result_message += f"💵 <b>С доставкой до Москвы:</b>\n"
-        result_message += f"USDT: <b>{format_number(total_cost_usdt_to_moscow)} ₽</b>"
-        result_message += f"\nБанк: <b>{format_number(total_cost_bank_to_moscow)} ₽</b>"
+            result_message += f"Банк: {format_number(price_rub_bank)} ₽\n\n"
+        else:
+            result_message += "\n"
 
         result_message += (
-            f"\n\n🔗 <a href='{preview_link}'>Ссылка на автомобиль</a>\n\n"
-            f"📢 <a href='https://t.me/mdmgroupkorea'>Официальный телеграм канал</a>\n"
+            f"• ФРАХТ:\n"
+            f"USDT: <b>{format_number(freight_usdt_dollars)}$</b>\n"
+            f"Банком: <b>{format_number(car_data['freight_rub'])} ₽</b>\n\n"
+            f"• Брокерские услуги:\n"
+            f"<b>{format_number(car_data['broker_rub'])} ₽</b>\n\n"
+            f"📝 Таможенные платежи:\n"
+            f"• Таможенный сбор:\n"
+            f"<b>{format_number(car_data['customs_fee_rub'])} ₽</b>\n\n"
+            f"• Таможенная пошлина:\n"
+            f"<b>{format_number(car_data['customs_duty_rub'])} ₽</b>\n\n"
+            f"• Утилизационный сбор:\n"
+            f"<b>{format_number(car_data['util_fee_rub'])} ₽</b>\n\n"
+            f"💵 Итоговая стоимость под ключ во Владивостоке:\n"
+            f"USDT - машина + фрахт: <b>{format_number(usdt_car_plus_freight)}$</b>\n"
+            f"USDT - таможня + брокерские: <b>{format_number(customs_plus_broker_rub)} ₽</b>\n\n"
+        )
+
+        if rub_krw_rate > 0:
+            result_message += f"Банк: <b>{format_number(total_cost_bank)} ₽</b>\n\n"
+        else:
+            result_message += "\n"
+
+        result_message += (
+            f"💵 С доставкой до Москвы (автовоз):\n"
+            f"USDT: машина + фрахт: <b>{format_number(usdt_car_plus_freight)}$</b>\n"
+            f"таможня + брокерские + автовоз: <b>{format_number(customs_plus_broker_avtovoz_rub)} ₽</b>\n\n"
+        )
+
+        if rub_krw_rate > 0:
+            result_message += (
+                f"Банк: <b>{format_number(total_cost_bank_to_moscow)} ₽</b>\n\n"
+            )
+
+        result_message += (
+            f"🔗 <a href='{preview_link}'>ССЫЛКА НА АВТОМОБИЛЬ</a>\n\n"
+            f"📢 <a href='https://t.me/intelgocars'>ОФИЦИАЛЬНЫЙ ТЕЛЕГРАМ КАНАЛ</a>\n"
         )
 
         # Клавиатура с дальнейшими действиями
@@ -898,12 +809,6 @@ def calculate_cost(link, message):
             types.InlineKeyboardButton(
                 "Выплаты по ДТП",
                 callback_data="technical_report",
-            )
-        )
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Оставить заявку",
-                callback_data="add_crm_deal",
             )
         )
         keyboard.add(
@@ -995,16 +900,7 @@ def get_insurance_total():
 # Callback query handler
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback_query(call):
-    global car_data, car_id_external, usd_rate, user_data
-
-    # Пропускаем callback_data, которые обрабатываются отдельными обработчиками
-    if call.data in [
-        "cancel_application",
-        "back_to_name_step",
-        "back_to_phone_step",
-        "back_to_budget_step",
-    ]:
-        return
+    global car_data, car_id_external, usd_rate, manual_calc_data
 
     # Обработка ручного расчёта - выбор возраста
     if call.data.startswith("manual_age_"):
@@ -1012,9 +908,9 @@ def handle_callback_query(call):
         age = call.data.replace("manual_age_", "")
 
         # Сохраняем возраст в данных пользователя
-        if call.from_user.id not in user_data:
-            user_data[call.from_user.id] = {}
-        user_data[call.from_user.id]["manual_age"] = age
+        if call.from_user.id not in manual_calc_data:
+            manual_calc_data[call.from_user.id] = {}
+        manual_calc_data[call.from_user.id]["manual_age"] = age
 
         # Очищаем предыдущие меню перед показом нового
         clear_previous_menus(call.message.chat.id, call.from_user.id)
@@ -1081,10 +977,10 @@ def handle_callback_query(call):
 
         # Сохраняем объем двигателя в данных пользователя
         if (
-            call.from_user.id in user_data
-            and "manual_age" in user_data[call.from_user.id]
+            call.from_user.id in manual_calc_data
+            and "manual_age" in manual_calc_data[call.from_user.id]
         ):
-            user_data[call.from_user.id]["engine_volume"] = engine_volume
+            manual_calc_data[call.from_user.id]["engine_volume"] = engine_volume
 
             # Очищаем предыдущие меню перед показом нового
             clear_previous_menus(call.message.chat.id, call.from_user.id)
@@ -1143,9 +1039,9 @@ def handle_callback_query(call):
 
         # Получаем сохраненный возраст из данных пользователя
         user_id = call.from_user.id
-        if user_id in user_data and "manual_age" in user_data[user_id]:
+        if user_id in manual_calc_data and "manual_age" in manual_calc_data[user_id]:
             # Вызываем функцию обработки выбора возраста для возврата к выбору объема двигателя
-            age = user_data[user_id]["manual_age"]
+            age = manual_calc_data[user_id]["manual_age"]
 
             # Создаем клавиатуру с кнопками объема двигателя
             markup = types.InlineKeyboardMarkup(row_width=3)
@@ -1200,37 +1096,6 @@ def handle_callback_query(call):
             # Если данных нет, начинаем процесс заново
             start_manual_calculation(call.message.chat.id, call.from_user.id)
 
-    elif call.data == "add_crm_deal":
-        # Отвечаем на callback, чтобы убрать индикатор загрузки у кнопки
-        bot.answer_callback_query(call.id, "Начинаем оформление заявки")
-
-        # Отправляем сообщение о начале процесса
-        bot.send_message(
-            call.message.chat.id,
-            "✏️ Оформление заявки на автомобиль\n\nДля связи с вами нам потребуется некоторая информация.",
-        )
-
-        # Создаем клавиатуру с кнопкой отмены
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton(
-                "🚫 Отменить заявку", callback_data="cancel_application"
-            )
-        )
-
-        # Запрашиваем ФИО
-        msg = bot.send_message(
-            call.message.chat.id, "Пожалуйста, введите ваше ФИО:", reply_markup=markup
-        )
-
-        # Регистрируем следующий шаг - сбор телефона
-        user_data[call.from_user.id] = {
-            "step": "waiting_name",
-            "msg_id": msg.message_id,
-        }
-        # Устанавливаем обработчик для следующего сообщения от этого пользователя
-        bot.register_next_step_handler(msg, process_name_step)
-
     elif call.data.startswith("detail"):
         print_message("[ЗАПРОС] ДЕТАЛИЗАЦИЯ РАСЧËТА")
 
@@ -1257,10 +1122,6 @@ def handle_callback_query(call):
             f"Временная регистрация-Владивосток:\n<b>${format_number(car_data['perm_registration_russia_usd'])}</b> | <b>₩{format_number(car_data['perm_registration_russia_krw'])}</b> | <b>{format_number(car_data['perm_registration_russia_rub'])} ₽</b>\n\n"
             f"Итого расходов по России: \n<b>${format_number(car_data['russia_total_usd'])}</b> | <b>₩{format_number(car_data['russia_total_krw'])}</b> | <b>{format_number(car_data['russia_total_rub'])} ₽</b>\n\n\n"
             f"Итого под ключ во Владивостоке: \n<b>${format_number(car_data['total_cost_usd'])}</b> | <b>₩{format_number(car_data['total_cost_krw'])}</b> | <b>{format_number(car_data['total_cost_rub'])} ₽</b>\n\n"
-            f"<b>Доставку до вашего города уточняйте у менеджеров:</b>\n\n"
-            f"🇰🇷 +82 10 2382 4808 <a href='https://wa.me/821023824808'>Александр</a>\n"
-            f"🇰🇷 +82 10 7928 8398 <a href='https://wa.me/821079288398'>Сергей</a>\n"
-            f"🇰🇷 +82 10 2235 4808 <a href='https://wa.me/821022354808'>Александр</a>\n"
         )
 
         # Inline buttons for further actions
@@ -1280,13 +1141,6 @@ def handle_callback_query(call):
                     callback_data="calculate_another",
                 )
             )
-
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Оставить заявку",
-                callback_data="add_crm_deal",
-            )
-        )
 
         bot.send_message(
             call.message.chat.id,
@@ -1326,12 +1180,6 @@ def handle_callback_query(call):
                     callback_data="calculate_another",
                 )
             )
-            keyboard.add(
-                types.InlineKeyboardButton(
-                    "Оставить заявку",
-                    callback_data="add_crm_deal",
-                )
-            )
 
             # Отправка сообщения об ошибке
             bot.send_message(
@@ -1361,12 +1209,6 @@ def handle_callback_query(call):
                 types.InlineKeyboardButton(
                     "Рассчитать стоимость другого автомобиля",
                     callback_data="calculate_another",
-                )
-            )
-            keyboard.add(
-                types.InlineKeyboardButton(
-                    "Оставить заявку",
-                    callback_data="add_crm_deal",
                 )
             )
 
@@ -1404,40 +1246,38 @@ def handle_message(message):
         calculate_cost(user_message, message)
 
     # Проверка на другие команды
-    elif user_message == "Написать менеджеру":
-        bot.send_message(
-            message.chat.id,
-            f"Вы можете связаться с нашими менеджерами:\n"
-            f"🇰🇷 +82 10 2382 4808 (https://wa.me/821023824808) «Александр»\n"
-            f"🇰🇷 +82 10 7928 8398 (https://wa.me/821079288398) «Сергей»\n"
-            f"🇰🇷 +82 10 2235 4808 (https://wa.me/821022354808) «Александр»",
-        )
-
     elif user_message == "О нас":
-        about_message = "MDM GROUP\nЮжнокорейская экспортная компания.\nСпециализируемся на поставках автомобилей из Южной Кореи в страны СНГ.\nОпыт работы более 5 лет.\n\nПочему выбирают нас?\n• Надежность и скорость доставки.\n• Индивидуальный подход к каждому клиенту.\n• Полное сопровождение сделки.\n\n💬 Ваш путь к надежным автомобилям начинается здесь!"
+        about_message = "IntelGo\nЮжнокорейская экспортная компания.\nСпециализируемся на поставках автомобилей из Южной Кореи в страны СНГ.\nОпыт работы более 5 лет.\n\nПочему выбирают нас?\n• Надежность и скорость доставки.\n• Индивидуальный подход к каждому клиенту.\n• Полное сопровождение сделки.\n\n💬 Ваш путь к надежным автомобилям начинается здесь!"
         bot.send_message(message.chat.id, about_message)
 
     elif user_message == "Наш сайт":
         bot.send_message(
             message.chat.id,
-            "Посетите наш сайт: https://mdmgroupkr.com/",
+            "Посетите наш сайт: https://intelgo-cars.ru/",
         )
 
     elif user_message == "Telegram-канал":
-        channel_link = "https://t.me/mdmgroupkorea"
+        channel_link = "https://t.me/intelgocars"
         bot.send_message(
             message.chat.id, f"Подписывайтесь на наш Telegram-канал: {channel_link}"
         )
 
     elif user_message == "Instagram":
-        instagram_link = "https://www.instagram.com/mdm_group.kr/"
+        instagram_link = "https://www.instagram.com/intelgo_cars/"
         bot.send_message(
             message.chat.id,
             f"Посетите наш Instagram: {instagram_link}",
         )
 
+    elif user_message == "ВКонтакте":
+        vk_link = "https://vk.com/intelgo_cars"
+        bot.send_message(
+            message.chat.id,
+            f"Присоединяйтесь к нам ВКонтакте: {vk_link}",
+        )
+
     elif user_message == "Tik-Tok":
-        tiktok_link = "https://www.tiktok.com/@mdm_group"
+        tiktok_link = "https://www.tiktok.com/@intelgo_cars"
         bot.send_message(
             message.chat.id,
             f"Следите за свежим контентом на нашем TikTok: {tiktok_link}",
@@ -1448,442 +1288,6 @@ def handle_message(message):
             message.chat.id,
             "Пожалуйста, введите корректную ссылку на автомобиль с сайта www.encar.com или fem.encar.com.",
         )
-
-
-def process_name_step(message):
-    """Обработчик для ввода имени пользователя"""
-    user_id = message.from_user.id
-    if user_id in user_data:
-        # Сохраняем имя
-        user_data[user_id]["name"] = message.text
-        user_data[user_id]["step"] = "waiting_phone"
-
-        # Создаем клавиатуру с кнопками навигации
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton(
-                "🚫 Отменить заявку", callback_data="cancel_application"
-            )
-        )
-
-        # Запрашиваем номер телефона
-        msg = bot.send_message(
-            message.chat.id, "Теперь введите ваш номер телефона:", reply_markup=markup
-        )
-        bot.register_next_step_handler(msg, process_phone_step)
-    else:
-        bot.send_message(
-            message.chat.id,
-            "Произошла ошибка. Пожалуйста, начните заново.",
-            reply_markup=main_menu(),
-        )
-
-
-def process_phone_step(message):
-    """Обработчик для ввода номера телефона"""
-    user_id = message.from_user.id
-    phone = message.text.strip()
-
-    if not is_valid_phone(phone):
-        # Создаем клавиатуру с кнопками навигации
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton(
-                "🚫 Отменить заявку", callback_data="cancel_application"
-            )
-        )
-
-        msg = bot.send_message(
-            message.chat.id,
-            "❌ Пожалуйста, введите корректный номер телефона в международном формате (например, +7..., +82..., +1...).",
-            reply_markup=markup,
-        )
-        bot.register_next_step_handler(msg, process_phone_step)  # Повтор ввода
-        return
-
-    if user_id in user_data:
-        user_data[user_id]["phone"] = phone
-        user_data[user_id]["step"] = "waiting_budget"
-
-        # Создаем клавиатуру с кнопками навигации
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton("◀️ Назад", callback_data="back_to_name_step")
-        )
-        markup.add(
-            types.InlineKeyboardButton(
-                "🚫 Отменить заявку", callback_data="cancel_application"
-            )
-        )
-
-        msg = bot.send_message(
-            message.chat.id, "Введите ваш бюджет (в рублях):", reply_markup=markup
-        )
-        bot.register_next_step_handler(msg, process_budget_step)
-    else:
-        bot.send_message(
-            message.chat.id,
-            "Произошла ошибка. Пожалуйста, начните заново.",
-            reply_markup=main_menu(),
-        )
-
-
-def process_budget_step(message):
-    """Обработчик для ввода бюджета"""
-    user_id = message.from_user.id
-    if user_id in user_data:
-        try:
-            # Проверяем, что введено число
-            budget = float(message.text.replace(" ", "").replace(",", "."))
-
-            # Сохраняем бюджет
-            user_data[user_id]["budget"] = budget
-            user_data[user_id]["step"] = "waiting_car_link"
-
-            # Создаем клавиатуру с кнопками навигации
-            markup = types.InlineKeyboardMarkup()
-            markup.add(
-                types.InlineKeyboardButton(
-                    "◀️ Назад", callback_data="back_to_phone_step"
-                )
-            )
-            markup.add(
-                types.InlineKeyboardButton(
-                    "🚫 Отменить заявку", callback_data="cancel_application"
-                )
-            )
-
-            # Запрашиваем ссылку на автомобиль
-            msg = bot.send_message(
-                message.chat.id,
-                "Введите ссылку на интересующий автомобиль (если есть) или напишите 'нет':",
-                reply_markup=markup,
-            )
-            bot.register_next_step_handler(msg, process_car_link_step)
-        except ValueError:
-            # Если бюджет введен некорректно, просим повторить
-            # Создаем клавиатуру с кнопками навигации
-            markup = types.InlineKeyboardMarkup()
-            markup.add(
-                types.InlineKeyboardButton(
-                    "◀️ Назад", callback_data="back_to_phone_step"
-                )
-            )
-            markup.add(
-                types.InlineKeyboardButton(
-                    "🚫 Отменить заявку", callback_data="cancel_application"
-                )
-            )
-
-            msg = bot.send_message(
-                message.chat.id,
-                "Пожалуйста, введите корректную сумму (только цифры):",
-                reply_markup=markup,
-            )
-            bot.register_next_step_handler(msg, process_budget_step)
-    else:
-        bot.send_message(
-            message.chat.id,
-            "Произошла ошибка. Пожалуйста, начните заново.",
-            reply_markup=main_menu(),
-        )
-
-
-def process_car_link_step(message):
-    """Обработчик для ввода ссылки на автомобиль"""
-    user_id = message.from_user.id
-    if user_id in user_data:
-        # Получаем все данные пользователя
-        name = user_data[user_id]["name"]
-        phone = user_data[user_id]["phone"]
-        budget = user_data[user_id]["budget"]
-        car_link = message.text
-
-        # Отправляем сообщение о том, что заявка обрабатывается
-        processing_msg = bot.send_message(
-            message.chat.id, "⏳ Отправляем вашу заявку... Пожалуйста, подождите."
-        )
-
-        # Создаем сделку в amoCRM
-        try:
-            if create_amocrm_lead(name, phone, budget, car_link):
-                # Успешное создание сделки
-                bot.edit_message_text(
-                    "✅ Заявка успешно создана!",
-                    message.chat.id,
-                    processing_msg.message_id,
-                )
-
-                success_msg = (
-                    f"Спасибо, {name}!\n\n"
-                    f"✅ Ваша заявка успешно отправлена.\n"
-                    f"📞 С вами свяжутся в ближайшее время по указанному номеру телефона: {phone}\n\n"
-                    f"Если у вас возникли вопросы, вы можете связаться с нашими менеджерами напрямую:\n"
-                    f"🇰🇷 +82 10 2382 4808 (https://wa.me/821023824808) «Александр»\n"
-                    f"🇰🇷 +82 10 7928 8398 (https://wa.me/821079288398) «Сергей»\n"
-                    f"🇰🇷 +82 10 2235 4808 (https://wa.me/821022354808) «Александр»"
-                )
-                bot.send_message(message.chat.id, success_msg, reply_markup=main_menu())
-            else:
-                # Ошибка при создании сделки
-                bot.edit_message_text(
-                    "❌ Произошла ошибка при отправке заявки.",
-                    message.chat.id,
-                    processing_msg.message_id,
-                )
-
-                error_msg = (
-                    f"Извините, {name}, не удалось создать заявку.\n\n"
-                    f"Пожалуйста, попробуйте позже или свяжитесь с нашими менеджерами напрямую:"
-                )
-                bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
-                logging.error(
-                    f"Ошибка при создании заявки для user_id={user_id}, name={name}"
-                )
-        except Exception as e:
-            logging.exception(
-                "Ошибка при создании заявки в amoCRM"
-            )  # выводит traceback
-            print_message(f"❌ Внутренняя ошибка: {str(e)}")
-
-            # Показываем ошибку пользователю и предлагаем вернуться назад
-            markup = types.InlineKeyboardMarkup()
-            markup.add(
-                types.InlineKeyboardButton(
-                    "◀️ Назад", callback_data="back_to_budget_step"
-                )
-            )
-            markup.add(
-                types.InlineKeyboardButton(
-                    "🚫 Отменить заявку", callback_data="cancel_application"
-                )
-            )
-
-            bot.send_message(
-                message.chat.id,
-                "Произошла ошибка при отправке заявки. Пожалуйста, попробуйте еще раз или обратитесь к менеджеру напрямую.",
-                reply_markup=markup,
-            )
-            return False
-
-        # Очищаем данные пользователя
-        del user_data[user_id]
-    else:
-        bot.send_message(
-            message.chat.id,
-            "Произошла ошибка. Пожалуйста, начните заново.",
-            reply_markup=main_menu(),
-        )
-
-
-def format_phone(phone):
-    """
-    Форматирует номер телефона, удаляя лишние символы
-    и добавляя +7 в начало, если нужно
-    """
-    # Удаляем все символы, кроме цифр
-    clean_phone = re.sub(r"\D", "", phone)
-
-    # Если номер начинается с 8 или 7, конвертируем в +7
-    if clean_phone.startswith("8") and len(clean_phone) == 11:
-        clean_phone = "7" + clean_phone[1:]
-
-    # Если нет кода страны, предполагаем +7
-    if len(clean_phone) == 10:
-        clean_phone = "7" + clean_phone
-
-    # Добавляем +
-    if not clean_phone.startswith("+"):
-        clean_phone = "+" + clean_phone
-
-    logging.info(f"Отформатирован номер телефона: {phone} -> {clean_phone}")
-    return clean_phone
-
-
-def create_amocrm_lead(name, phone, budget, car_link=None):
-    import os
-    import requests
-    import json
-    import logging
-    from os.path import exists
-
-    logging.info(
-        f"Создаем заявку: имя={name}, телефон={phone}, бюджет={budget}, ссылка={car_link}"
-    )
-
-    try:
-        price = int(float(budget))
-    except (ValueError, TypeError):
-        price = 0
-
-    formatted_phone = format_phone(phone)
-
-    access_token = os.getenv("AMOCRM_ACCESS_TOKEN")
-    refresh_token = os.getenv("AMOCRM_REFRESH_TOKEN")
-
-    # if exists("access_token.txt"):
-    #     with open("access_token.txt", "r") as f:
-    #         access_token = f.read().strip()
-    # if exists("refresh_token.txt"):
-    #     with open("refresh_token.txt", "r") as f:
-    #         refresh_token = f.read().strip()
-
-    if not access_token or not refresh_token:
-        logging.error("Отсутствуют токены доступа к AmoCRM")
-        return False
-
-    subdomain = os.getenv("AMOCRM_SUBDOMAIN")
-    client_id = os.getenv("AMOCRM_CLIENT_ID")
-    client_secret = os.getenv("AMOCRM_CLIENT_SECRET")
-    redirect_url = os.getenv("AMOCRM_REDIRECT_URL")
-    base_url = f"https://{subdomain}.amocrm.ru/api/v4"
-
-    def refresh_access_token():
-        nonlocal access_token, refresh_token
-        token_url = f"https://{subdomain}.amocrm.ru/oauth2/access_token"
-        data = {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "redirect_uri": redirect_url,
-        }
-        res = requests.post(token_url, json=data)
-        if res.status_code == 200:
-            result = res.json()
-            access_token = result.get("access_token")
-            refresh_token = result.get("refresh_token")
-            with open("access_token.txt", "w") as f:
-                f.write(access_token)
-            with open("refresh_token.txt", "w") as f:
-                f.write(refresh_token)
-            return True
-        else:
-            logging.error(
-                f"Ошибка при обновлении токена: {res.status_code}, {res.text}"
-            )
-            return False
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-    }
-
-    # --- Шаг 1: создание контакта ---
-    contact_data = [
-        {
-            "name": name,
-            "responsible_user_id": 12208190,
-            "custom_fields_values": [
-                {
-                    "field_code": "PHONE",
-                    "values": [
-                        {
-                            "value": formatted_phone,
-                            "enum_code": "WORK",  # можно также "MOB" или "WORK"
-                        }
-                    ],
-                }
-            ],
-        }
-    ]
-
-    contacts_url = f"{base_url}/contacts"
-    contact_response = requests.post(contacts_url, headers=headers, json=contact_data)
-
-    if contact_response.status_code == 401 and refresh_access_token():
-        headers["Authorization"] = f"Bearer {access_token}"
-        contact_response = requests.post(
-            contacts_url, headers=headers, json=contact_data
-        )
-
-    if contact_response.status_code >= 400:
-        logging.error(
-            f"Ошибка при создании контакта: {contact_response.status_code}, {contact_response.text}"
-        )
-        return False
-
-    contact_id = contact_response.json().get("id")
-    if not contact_id:
-        contact_id = (
-            contact_response.json()
-            .get("_embedded", {})
-            .get("contacts", [{}])[0]
-            .get("id")
-        )
-    if not contact_id:
-        logging.error("Не удалось получить ID контакта")
-        return False
-
-    logging.info(f"Контакт успешно создан с ID: {contact_id}")
-
-    # --- Шаг 2: создание сделки ---
-    custom_fields = [{"field_id": 1069807, "values": [{"value": price}]}]
-    if car_link and car_link.lower() != "нет":
-        custom_fields.append({"field_id": 1295963, "values": [{"value": car_link}]})
-
-    lead_data = [
-        {
-            "name": f"Заявка от {name}",
-            "price": price,
-            "_embedded": {
-                "contacts": [{"id": contact_id}],
-                "tags": [{"name": "telegram_bot"}],
-            },
-        }
-    ]
-
-    leads_url = f"{base_url}/leads"
-    lead_response = requests.post(leads_url, headers=headers, json=lead_data)
-
-    if lead_response.status_code == 401 and refresh_access_token():
-        headers["Authorization"] = f"Bearer {access_token}"
-        lead_response = requests.post(leads_url, headers=headers, json=lead_data)
-
-    if lead_response.status_code >= 400:
-        logging.error(
-            f"Ошибка при создании сделки: {lead_response.status_code}, {lead_response.text}"
-        )
-        return False
-
-    lead_id = lead_response.json().get("id")
-    if not lead_id:
-        lead_id = (
-            lead_response.json().get("_embedded", {}).get("leads", [{}])[0].get("id")
-        )
-
-    if not lead_id:
-        logging.error("Не удалось получить ID сделки")
-        return False
-
-    logging.info(f"Сделка успешно создана с ID: {lead_id}")
-
-    # --- Шаг 3: добавляем примечание ---
-    notes_url = f"{base_url}/leads/notes"
-    if car_link and car_link.lower() != "нет":
-        note_text = f"Заявка из Telegram\nФИО: {name}\nТелефон: {formatted_phone}\nБюджет: {price}₽\nСсылка: {car_link}"
-    else:
-        note_text = f"Заявка из Telegram\nФИО: {name}\nТелефон: {formatted_phone}\nБюджет: {price}₽"
-
-    note_data = [
-        {"entity_id": lead_id, "note_type": "common", "params": {"text": note_text}}
-    ]
-
-    note_response = requests.post(notes_url, headers=headers, json=note_data)
-
-    if note_response.status_code == 401 and refresh_access_token():
-        headers["Authorization"] = f"Bearer {access_token}"
-        note_response = requests.post(notes_url, headers=headers, json=note_data)
-
-    if note_response.status_code >= 400:
-        logging.warning(
-            f"Ошибка при создании примечания: {note_response.status_code}, {note_response.text}"
-        )
-    else:
-        logging.info("Примечание успешно добавлено")
-
-    print_message(f"✅ Заявка отправлена в amoCRM (ID сделки: {lead_id})")
-    return True
 
 
 # Функции для ручного расчёта
@@ -1924,8 +1328,8 @@ def process_manual_engine_volume(message):
         engine_volume = int(message.text.strip())
         user_id = message.from_user.id
 
-        if user_id in user_data and "manual_age" in user_data[user_id]:
-            user_data[user_id]["engine_volume"] = engine_volume
+        if user_id in manual_calc_data and "manual_age" in manual_calc_data[user_id]:
+            manual_calc_data[user_id]["engine_volume"] = engine_volume
 
             # Запрашиваем стоимость автомобиля
             msg = bot.send_message(
@@ -1966,31 +1370,30 @@ def process_manual_car_price(message):
     # Проверяем, нет ли уже процесса расчета для этого пользователя
     user_id = message.from_user.id
     if (
-        user_id in user_data
-        and "processing" in user_data[user_id]
-        and user_data[user_id]["processing"]
+        user_id in manual_calc_data
+        and "processing" in manual_calc_data[user_id]
+        and manual_calc_data[user_id]["processing"]
     ):
         return
 
     try:
         # Защита от двойной обработки
-        user_data[user_id]["processing"] = True
+        if user_id not in manual_calc_data:
+            manual_calc_data[user_id] = {}
+        manual_calc_data[user_id]["processing"] = True
 
         # Удаляем пробелы из введенной строки перед преобразованием в число
         car_price = int(message.text.strip().replace(" ", ""))
 
         if (
-            user_id in user_data
-            and "manual_age" in user_data[user_id]
-            and "engine_volume" in user_data[user_id]
+            user_id in manual_calc_data
+            and "manual_age" in manual_calc_data[user_id]
+            and "engine_volume" in manual_calc_data[user_id]
         ):
-            # Очищаем предыдущие меню
-            clear_previous_menus(message.chat.id, user_id)
-
             # Выполняем расчёт
             calculate_manual_cost(
-                user_data[user_id]["manual_age"],
-                user_data[user_id]["engine_volume"],
+                manual_calc_data[user_id]["manual_age"],
+                manual_calc_data[user_id]["engine_volume"],
                 car_price,
                 message,
             )
@@ -2008,14 +1411,14 @@ def process_manual_car_price(message):
         bot.register_next_step_handler(msg, process_manual_car_price)
     finally:
         # Снимаем флаг обработки
-        if user_id in user_data and "processing" in user_data[user_id]:
-            user_data[user_id]["processing"] = False
+        if user_id in manual_calc_data and "processing" in manual_calc_data[user_id]:
+            manual_calc_data[user_id]["processing"] = False
 
 
 def calculate_manual_cost(age, engine_volume, car_price, message):
     """Функция расчёта стоимости по введённым вручную параметрам"""
 
-    global car_data, usdt_krw_rate, usdt_rub_rate, rub_krw_rate
+    global car_data, usdt_krw_rate, usdt_rub_rate, usd_krw_rate
 
     print_message("ЗАПРОС НА РУЧНОЙ РАСЧЁТ АВТОМОБИЛЯ")
 
@@ -2023,6 +1426,7 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
     get_usdt_to_rub_rate()
     get_currency_rates()
     get_rub_krw_rate()  # Получаем банковский курс RUB/KRW
+    get_usd_krw_rate()  # Получаем курс USD/KRW для фрахта
 
     # Отправляем сообщение о том, что идёт расчёт
     processing_message = bot.send_message(
@@ -2042,13 +1446,14 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
         # Форматирование объёма двигателя для отображения
         engine_volume_formatted = f"{format_number(engine_volume)} cc"
 
-        # Конвертируем стоимость авто в рубли через USDT
-        price_krw = car_price
-        price_usdt = int(price_krw) / usdt_krw_rate
-        price_rub_usdt = int(price_usdt) * usdt_rub_rate
+        # Услуга компании
+        company_service_rub = 50000
+        company_service_usdt = company_service_rub / usdt_rub_rate
 
-        # Конвертируем стоимость авто в рубли через банковский курс
-        price_rub_bank = int(price_krw) / rub_krw_rate if rub_krw_rate > 0 else 0
+        # Расчёт стоимости в рублях (включая услугу компании)
+        price_krw = car_price
+        price_usdt = int(price_krw) / usdt_krw_rate + company_service_usdt
+        price_rub = int(price_usdt) * usdt_rub_rate
 
         # Получаем таможенные сборы
         from utils import get_customs_fees_manual
@@ -2064,32 +1469,35 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
         customs_duty = clean_number(response["tax"])
         recycling_fee = clean_number(response["util"])
 
-        # Расчет итоговой стоимости автомобиля в рублях (USDT)
-        total_cost_usdt = (
-            price_rub_usdt  # Стоимость автомобиля в рублях через USDT
+        # Расчет фрахта в рублях: $1000 -> воны -> рубли (для ручного расчета)
+        freight_usd = 1000  # $1000
+        freight_krw = freight_usd * usd_krw_rate  # Переводим доллары в воны через USD/KRW курс
+        freight_rub_usdt = (
+            freight_krw / usdt_krw_rate * usdt_rub_rate
+        )  # Через USDT курс
+        freight_rub_bank = (
+            freight_krw / rub_krw_rate if rub_krw_rate > 0 else freight_rub_usdt
+        )  # Через банковский курс
+
+        car_data["freight_rub"] = (
+            freight_rub_bank  # Используем банковский курс для отображения
+        )
+        car_data["freight_usdt"] = freight_usd
+
+        # Сохраняем услугу компании в car_data для внутренних расчетов
+        car_data["company_service_rub"] = company_service_rub
+        car_data["company_service_usdt"] = company_service_usdt
+
+        # Расчет итоговой стоимости автомобиля в рублях
+        total_cost = (
+            price_rub  # Стоимость автомобиля в рублях (уже включает услугу компании)
             + customs_fee  # Таможенный сбор
             + customs_duty  # Таможенная пошлина
             + recycling_fee  # Утилизационный сбор
-            + 100000  # ФРАХТ
+            + freight_rub_bank  # ФРАХТ рассчитанный через банковский курс
             + 100000  # Брокерские услуги
+            # Услуга компании уже включена в price_rub
         )
-
-        total_cost_usdt_to_moscow = total_cost_usdt + 220000
-
-        # Расчет итоговой стоимости автомобиля в рублях (банк)
-        total_cost_bank = (
-            price_rub_bank  # Стоимость автомобиля в рублях через банк
-            + customs_fee  # Таможенный сбор
-            + customs_duty  # Таможенная пошлина
-            + recycling_fee  # Утилизационный сбор
-            + 100000  # ФРАХТ
-            + 100000  # Брокерские услуги
-        )
-
-        total_cost_bank_to_moscow = total_cost_bank + 220000
-
-        car_data["freight_rub"] = 100000
-        car_data["freight_usdt"] = 1000
 
         car_data["broker_rub"] = 100000
         car_data["broker_usdt"] = 100000 / usdt_rub_rate
@@ -2104,51 +1512,106 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
         car_data["util_fee_usdt"] = recycling_fee / usdt_rub_rate
 
         # Формирование сообщения результата
-        currency_rates_text = f"💱 Актуальные курсы валют:\nUSDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\nUSDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>"
-        if rub_krw_rate > 0:
-            currency_rates_text += f"\nRUB/KRW: <b>{rub_krw_rate:.2f} ₩</b>"
-
         result_message = (
             f"🚗 <b>Ручной расчёт автомобиля</b>\n\n"
             f"📅 Возраст: {age_formatted}\n"
             f"🔧 Объём двигателя: {engine_volume_formatted}\n\n"
-            f"{currency_rates_text}\n\n"
-            f"💰 <b>Стоимость:</b>\n"
-            f"• Цена авто:\n₩<b>{format_number(price_krw)}</b>\n"
-            f"USDT: <b>{format_number(price_rub_usdt)}</b> ₽"
+            f"💱 Актуальные курсы валют:\n"
+            f"USDT/KRW: <b>₩{usdt_krw_rate:.2f}</b>\n"
+            f"USDT/RUB: <b>{usdt_rub_rate:.2f} ₽</b>\n"
         )
 
         if rub_krw_rate > 0:
-            result_message += f"\nБанк: <b>{format_number(price_rub_bank)}</b> ₽"
+            result_message += f"RUB/KRW: <b>{rub_krw_rate:.2f} ₩</b>\n\n"
+        else:
+            result_message += "\n"
+
+        # Рассчитываем стоимости в долларах для USDT (для ручного расчета)
+        car_price_usdt = price_usdt  # Стоимость авто в USDT
+        freight_usdt_dollars = car_data["freight_usdt"]  # 1000$
+
+        # Рассчитываем составные части для итоговых сумм
+        usdt_car_plus_freight = car_price_usdt + freight_usdt_dollars
+        customs_plus_broker_rub = (
+            customs_fee
+            + customs_duty
+            + recycling_fee
+            + car_data["broker_rub"]
+            # company_service_rub уже включен в цену автомобиля
+        )
+        customs_plus_broker_avtovoz_rub = (
+            customs_plus_broker_rub + 220000
+        )  # +автовоз до Москвы
+
+        # Расчёт итоговой стоимости с доставкой до Москвы
+        total_cost_to_moscow = total_cost + 220000
 
         result_message += (
-            f"\n\n• ФРАХТ:\n<b>{format_number(car_data['freight_rub'])}</b> ₽\n\n"
-            f"• Брокерские услуги:\n<b>{format_number(car_data['broker_rub'])}</b> ₽\n\n"
-            f"📝 <b>Таможенные платежи:</b>\n"
-            f"• Таможенный сбор:\n<b>{format_number(car_data['customs_fee_rub'])}</b> ₽\n\n"
-            f"• Таможенная пошлина:\n<b>{format_number(car_data['customs_duty_rub'])}</b> ₽\n\n"
-            f"• Утилизационный сбор:\n<b>{format_number(car_data['util_fee_rub'])}</b> ₽\n\n"
-            f"💵 <b>Итоговая стоимость под ключ во Владивостоке:</b>\n"
-            f"USDT: <b>{format_number(total_cost_usdt)} ₽</b>"
+            f"💰 Стоимость:\n"
+            f"• Цена авто: <b>₩{format_number(price_krw)}</b>\n"
+            f"USDT: <b>{format_number(price_usdt)}$</b>\n"
         )
 
         if rub_krw_rate > 0:
-            result_message += f"\nБанк: <b>{format_number(total_cost_bank)} ₽</b>\n\n"
+            price_rub_bank = (
+                (int(price_krw) / rub_krw_rate + company_service_rub)
+                if rub_krw_rate > 0
+                else 0
+            )
+            result_message += f"Банк: {format_number(price_rub_bank)} ₽\n\n"
+        else:
+            result_message += "\n"
 
-        result_message += f"💵 <b>С доставкой до Москвы:</b>\n"
-        result_message += f"USDT: <b>{format_number(total_cost_usdt_to_moscow)} ₽</b>"
-        result_message += f"\nБанк: <b>{format_number(total_cost_bank_to_moscow)} ₽</b>"
+        result_message += (
+            f"• ФРАХТ:\n"
+            f"USDT: <b>{format_number(freight_usdt_dollars)}$</b>\n"
+            f"Банком: <b>{format_number(car_data['freight_rub'])} ₽</b>\n\n"
+            f"• Брокерские услуги:\n"
+            f"<b>{format_number(car_data['broker_rub'])} ₽</b>\n\n"
+            f"📝 Таможенные платежи:\n"
+            f"• Таможенный сбор:\n"
+            f"<b>{format_number(car_data['customs_fee_rub'])} ₽</b>\n\n"
+            f"• Таможенная пошлина:\n"
+            f"<b>{format_number(car_data['customs_duty_rub'])} ₽</b>\n\n"
+            f"• Утилизационный сбор:\n"
+            f"<b>{format_number(car_data['util_fee_rub'])} ₽</b>\n\n"
+            f"💵 Итоговая стоимость под ключ во Владивостоке:\n"
+            f"USDT - машина + фрахт: <b>{format_number(usdt_car_plus_freight)}$</b>\n"
+            f"USDT - таможня + брокерские: <b>{format_number(customs_plus_broker_rub)} ₽</b>\n\n"
+        )
 
-        result_message += f"\n\n📢 <a href='https://t.me/mdmgroupkorea'>Официальный телеграм канал</a>\n"
+        if rub_krw_rate > 0:
+            total_cost_bank = (
+                price_rub_bank  # Стоимость автомобиля в рублях через банк (уже включает услугу компании)
+                + customs_fee  # Таможенный сбор
+                + customs_duty  # Таможенная пошлина
+                + recycling_fee  # Утилизационный сбор
+                + freight_rub_bank  # ФРАХТ через банковский курс
+                + 100000  # Брокерские услуги
+                # Услуга компании уже включена в price_rub_bank
+            )
+            total_cost_bank_to_moscow = total_cost_bank + 220000
+            result_message += f"Банк: <b>{format_number(total_cost_bank)} ₽</b>\n\n"
+        else:
+            result_message += "\n"
+
+        result_message += (
+            f"💵 С доставкой до Москвы (автовоз):\n"
+            f"USDT: машина + фрахт: <b>{format_number(usdt_car_plus_freight)}$</b>\n"
+            f"таможня + брокерские + автовоз: <b>{format_number(customs_plus_broker_avtovoz_rub)} ₽</b>\n\n"
+        )
+
+        if rub_krw_rate > 0:
+            result_message += (
+                f"Банк: <b>{format_number(total_cost_bank_to_moscow)} ₽</b>\n\n"
+            )
+
+        result_message += (
+            f"📢 <a href='https://t.me/intelgocars'>ОФИЦИАЛЬНЫЙ ТЕЛЕГРАМ КАНАЛ</a>\n"
+        )
 
         # Клавиатура с дальнейшими действиями
         keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "Оставить заявку",
-                callback_data="add_crm_deal",
-            )
-        )
         keyboard.add(
             types.InlineKeyboardButton(
                 "Новый ручной расчёт",
@@ -2181,85 +1644,16 @@ def calculate_manual_cost(age, engine_volume, car_price, message):
         bot.delete_message(message.chat.id, processing_message.message_id)
 
 
-def clear_user_step_data(user_id, step=None):
-    """
-    Очищает данные пользователя для указанного шага или всех шагов
-
-    :param user_id: ID пользователя
-    :param step: Шаг, данные которого нужно очистить (если None, очищает все данные)
-    """
-    if user_id not in user_data:
-        return
-
-    if step is None:
-        # Очищаем все данные, кроме имени и телефона
-        if "name" in user_data[user_id]:
-            name = user_data[user_id]["name"]
-            phone = user_data[user_id].get("phone", "")
-            user_data[user_id] = {"name": name}
-            if phone:
-                user_data[user_id]["phone"] = phone
-        else:
-            # Если нет важных данных, очищаем всё
-            user_data[user_id] = {}
-    elif step == "engine_volume" and "engine_volume" in user_data[user_id]:
-        # Очищаем данные об объёме двигателя
-        del user_data[user_id]["engine_volume"]
-    elif step == "car_price" and "car_price" in user_data[user_id]:
-        # Очищаем данные о цене автомобиля
-        del user_data[user_id]["car_price"]
-
-
-def clear_previous_menus(chat_id, user_id):
-    """
-    Удаляет предыдущие сообщения с меню у пользователя
-
-    :param chat_id: ID чата
-    :param user_id: ID пользователя
-    """
-    global user_last_menu
-
-    if user_id in user_last_menu:
-        # Удаляем все предыдущие сообщения с меню
-        for msg_id in user_last_menu[user_id]:
-            try:
-                bot.delete_message(chat_id, msg_id)
-            except Exception as e:
-                logging.error(f"Ошибка при удалении сообщения {msg_id}: {e}")
-
-        # Очищаем список сообщений
-        user_last_menu[user_id] = []
-
-
-def cancel_application(chat_id, user_id):
-    """Функция для отмены заявки и возврата в главное меню"""
-    if user_id in user_data:
-        # Удаляем данные пользователя
-        user_data.pop(user_id, None)
-
-    # Очищаем предыдущие меню
-    clear_previous_menus(chat_id, user_id)
-
-    # Отправляем сообщение о том, что заявка отменена
-    bot.send_message(
-        chat_id,
-        "🚫 Заявка отменена. Вы можете выбрать другое действие.",
-        reply_markup=main_menu(),
-    )
-
-
 def get_rub_krw_rate():
     """
-    Получает курс RUB/KRW с API Naver для банковских переводов
-    Использует курс "송금 받을때" (получение перевода)
+    Получает курс RUB/KRW с сайта Naver для банковских переводов
+    Ищет курс "송금 받을때" (получение перевода)
     """
     global rub_krw_rate
 
     print_message("ПОЛУЧАЕМ КУРС RUB/KRW для банковских переводов")
 
     try:
-        url = "https://m.search.naver.com/p/csearch/content/qapirender.nhn"
-
         headers = {
             "accept": "application/json, text/javascript, */*; q=0.01",
             "accept-language": "en,ru;q=0.9,en-CA;q=0.8,la;q=0.7,fr;q=0.6,ko;q=0.5",
@@ -2289,25 +1683,29 @@ def get_rub_krw_rate():
             "u2": "1",
         }
 
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(
+            "https://m.search.naver.com/p/csearch/content/qapirender.nhn",
+            params=params,
+            headers=headers,
+        )
         response.raise_for_status()
 
+        # Парсим JSON ответ
         data = response.json()
 
-        # Извлекаем курс из ответа
-        if "country" in data and len(data["country"]) >= 2:
-            # Берем курс из второго элемента массива country (индекс 1)
-            rate_value = float(data["country"][1]["value"])
-
+        # Извлекаем значение курса
+        if data and "country" in data and len(data["country"]) >= 2:
+            krw_value = data["country"][1]["value"]
+            # Конвертируем в float
+            rate_value = float(krw_value)
             # Отнимаем 0.5 пунктов согласно требованию
             rub_krw_rate = rate_value - 0.5
-
             print_message(
-                f"Курс RUB/KRW (API): {rate_value} -> {rub_krw_rate} (с учетом -0.5)"
+                f"Курс RUB/KRW (송금 받을때): {rate_value} -> {rub_krw_rate} (с учетом -0.5)"
             )
             return rub_krw_rate
         else:
-            print_message("Неверная структура ответа API")
+            print_message("Не удалось найти курс RUB/KRW")
             return None
 
     except Exception as e:
@@ -2328,6 +1726,7 @@ if __name__ == "__main__":
             try:
                 get_currency_rates()
                 get_rub_krw_rate()  # Добавляем обновление банковского курса
+                get_usd_krw_rate()  # Добавляем обновление курса USD/KRW
                 print_message("Курсы валют обновлены")
                 time.sleep(3600)  # Обновление каждый час (3600 секунд)
             except Exception as e:
@@ -2341,4 +1740,5 @@ if __name__ == "__main__":
     # Получаем начальные курсы при запуске
     get_currency_rates()
     get_rub_krw_rate()  # Добавляем получение банковского курса при запуске
+    get_usd_krw_rate()  # Добавляем получение курса USD/KRW при запуске
     bot.polling(non_stop=True)
