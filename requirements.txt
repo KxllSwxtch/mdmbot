@@ -5,7 +5,7 @@ amocrm-api==2.6.1
 anyio==3.7.1
 attrs==24.2.0
 beautifulsoup4==4.12.3
-blinker==1.7.0
+blinker==1.9.0
 Flask==3.1.0
 Brotli==1.1.0
 bs4==0.0.2
