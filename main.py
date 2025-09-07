@@ -62,6 +62,84 @@ user_last_menu = {}  # {user_id: [message_id1, message_id2, ...]}
 car_data = {}
 car_id_external = ""
 total_car_price = 0
+
+# Lead backup system
+def save_lead_to_backup(name, phone, budget, car_link, user_id, timestamp=None):
+    """Save lead to backup file when amoCRM is unavailable"""
+    import datetime
+    
+    if timestamp is None:
+        timestamp = datetime.datetime.now().isoformat()
+    
+    lead_data = {
+        "timestamp": timestamp,
+        "name": name,
+        "phone": phone,
+        "budget": budget,
+        "car_link": car_link,
+        "user_id": user_id,
+        "status": "pending"
+    }
+    
+    try:
+        # Load existing backup data
+        backup_file = "backup_leads.json"
+        backup_leads = []
+        
+        if os.path.exists(backup_file):
+            with open(backup_file, "r", encoding="utf-8") as f:
+                backup_leads = json.load(f)
+        
+        # Add new lead
+        backup_leads.append(lead_data)
+        
+        # Save back to file
+        with open(backup_file, "w", encoding="utf-8") as f:
+            json.dump(backup_leads, f, ensure_ascii=False, indent=2)
+        
+        logging.info(f"Lead saved to backup: {name} - {phone}")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Failed to save lead to backup: {e}")
+        return False
+
+def get_backup_leads_count():
+    """Get count of pending backup leads"""
+    try:
+        backup_file = "backup_leads.json"
+        if not os.path.exists(backup_file):
+            return 0
+            
+        with open(backup_file, "r", encoding="utf-8") as f:
+            backup_leads = json.load(f)
+            
+        pending_count = len([lead for lead in backup_leads if lead.get("status") == "pending"])
+        return pending_count
+        
+    except Exception as e:
+        logging.error(f"Error getting backup leads count: {e}")
+        return 0
+
+def notify_admin_about_amocrm_issue():
+    """Notify admin about amoCRM issues"""
+    admin_chat_id = os.getenv("ADMIN_CHAT_ID")  # Add this to your .env file
+    if admin_chat_id:
+        try:
+            backup_count = get_backup_leads_count()
+            message = (
+                f"🚨 ВНИМАНИЕ: Проблемы с amoCRM!\n\n"
+                f"❌ Не удается отправлять заявки в amoCRM\n"
+                f"📝 Заявок в резерве: {backup_count}\n\n"
+                f"🔧 Требуется обновить токены amoCRM\n"
+                f"Используйте скрипт: python get_new_tokens.py"
+            )
+            bot.send_message(admin_chat_id, message)
+            logging.info("Admin notified about amoCRM issues")
+        except Exception as e:
+            logging.error(f"Failed to notify admin: {e}")
+    else:
+        logging.warning("ADMIN_CHAT_ID not set - cannot notify admin")
 usdt_krw_rate = 0
 usdt_rub_rate = 0
 usd_rate = 0
@@ -1622,26 +1700,58 @@ def process_car_link_step(message):
                 )
                 bot.send_message(message.chat.id, success_msg, reply_markup=main_menu())
             else:
-                # Ошибка при создании сделки
-                bot.edit_message_text(
-                    "❌ Произошла ошибка при отправке заявки.",
-                    message.chat.id,
-                    processing_msg.message_id,
-                )
-
-                error_msg = (
-                    f"Извините, {name}, не удалось создать заявку.\n\n"
-                    f"Пожалуйста, попробуйте позже или свяжитесь с нашими менеджерами напрямую:"
-                )
-                bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
+                # Ошибка при создании сделки - сохраняем в резерв
                 logging.error(
                     f"Ошибка при создании заявки для user_id={user_id}, name={name}"
                 )
+                
+                # Сохраняем заявку в резерв
+                backup_saved = save_lead_to_backup(name, phone, budget, car_link, user_id)
+                
+                if backup_saved:
+                    # Уведомляем админа о проблеме
+                    notify_admin_about_amocrm_issue()
+                    
+                    bot.edit_message_text(
+                        "⚠️ Заявка сохранена в резерве.",
+                        message.chat.id,
+                        processing_msg.message_id,
+                    )
+                    
+                    backup_msg = (
+                        f"Спасибо, {name}!\n\n"
+                        f"⚠️ Возникли временные технические неполадки, но ваша заявка сохранена!\n"
+                        f"📋 Наш менеджер обработает её в ближайшее время.\n"
+                        f"📞 Свяжится с вами по номеру: {phone}\n\n"
+                        f"🚀 Для быстрой связи обращайтесь к менеджеру:\n"
+                        f"🇰🇷 +82 10 7732 4808 (https://wa.me/821077324808) «Менеджер»"
+                    )
+                    bot.send_message(message.chat.id, backup_msg, reply_markup=main_menu())
+                else:
+                    # Не удалось сохранить в резерв
+                    bot.edit_message_text(
+                        "❌ Произошла ошибка при отправке заявки.",
+                        message.chat.id,
+                        processing_msg.message_id,
+                    )
+                    
+                    error_msg = (
+                        f"Извините, {name}, не удалось создать заявку.\n\n"
+                        f"Пожалуйста, попробуйте позже или свяжитесь с нашими менеджерами напрямую:\n"
+                        f"🇰🇷 +82 10 7732 4808 (https://wa.me/821077324808) «Менеджер»"
+                    )
+                    bot.send_message(message.chat.id, error_msg, reply_markup=main_menu())
         except Exception as e:
             logging.exception(
                 "Ошибка при создании заявки в amoCRM"
             )  # выводит traceback
             print_message(f"❌ Внутренняя ошибка: {str(e)}")
+            
+            # Пытаемся сохранить заявку в резерв даже при исключении
+            backup_saved = save_lead_to_backup(name, phone, budget, car_link, user_id)
+            if backup_saved:
+                notify_admin_about_amocrm_issue()
+                logging.info(f"Заявка сохранена в резерве после ошибки: {name} - {phone}")
 
             # Показываем ошибку пользователю и предлагаем вернуться назад
             markup = types.InlineKeyboardMarkup()
