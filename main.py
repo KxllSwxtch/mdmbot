@@ -1807,12 +1807,53 @@ def format_phone(phone):
     return clean_phone
 
 
+def check_token_expiry_proactive():
+    """Check if tokens are nearing expiry and send alerts"""
+    try:
+        import datetime
+        from os.path import exists
+        
+        # Only check if tokens exist
+        if not exists("access_token.txt") or not exists("refresh_token.txt"):
+            return
+            
+        # Check token age (rough estimation)
+        # Access tokens typically expire after 24 hours
+        token_file_time = os.path.getmtime("access_token.txt")
+        current_time = datetime.datetime.now().timestamp()
+        age_hours = (current_time - token_file_time) / 3600
+        
+        # Alert if token is older than 20 hours (4 hours before expiry)
+        if age_hours > 20:
+            admin_chat_id = os.getenv("ADMIN_CHAT_ID")
+            if admin_chat_id:
+                try:
+                    warning_msg = (
+                        f"⚠️ ПРЕДУПРЕЖДЕНИЕ: Токены amoCRM скоро истекут!\n\n"
+                        f"🕐 Возраст токена: {age_hours:.1f} часов\n"
+                        f"⏰ Токены истекают через ~{24-age_hours:.1f} часов\n\n"
+                        f"🔧 Рекомендуется обновить токены:\n"
+                        f"• Локально: python get_new_tokens.py\n"
+                        f"• Веб-интерфейс: /refresh-tokens\n\n"
+                        f"Это предупреждение поможет избежать сбоев в работе бота."
+                    )
+                    bot.send_message(admin_chat_id, warning_msg)
+                    logging.info(f"Отправлено предупреждение об истечении токенов admin_chat_id={admin_chat_id}")
+                except Exception as e:
+                    logging.error(f"Ошибка отправки предупреждения о токенах: {e}")
+                    
+    except Exception as e:
+        logging.warning(f"Ошибка проверки истечения токенов: {e}")
+
 def create_amocrm_lead(name, phone, budget, car_link=None):
     import os
     import requests
     import json
     import logging
     from os.path import exists
+    
+    # Proactive token expiry check
+    check_token_expiry_proactive()
 
     logging.info(
         f"Создаем заявку: имя={name}, телефон={phone}, бюджет={budget}, ссылка={car_link}"
