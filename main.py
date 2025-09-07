@@ -36,9 +36,12 @@ DATABASE_URL = "postgres://uea5qru3fhjlj:p44343a46d4f1882a5ba2413935c9b9f0c284e6
 
 # Configure logging
 logging.basicConfig(
-    filename="bot.log",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log", encoding='utf-8'),
+        logging.StreamHandler()  # Also log to console
+    ]
 )
 
 # Load keys from .env file
@@ -1715,21 +1718,37 @@ def create_amocrm_lead(name, phone, budget, car_link=None):
     access_token = os.getenv("AMOCRM_ACCESS_TOKEN")
     refresh_token = os.getenv("AMOCRM_REFRESH_TOKEN")
 
-    # if exists("access_token.txt"):
-    #     with open("access_token.txt", "r") as f:
-    #         access_token = f.read().strip()
-    # if exists("refresh_token.txt"):
-    #     with open("refresh_token.txt", "r") as f:
-    #         refresh_token = f.read().strip()
+    # Fallback to token files if environment variables are not set
+    if not access_token and exists("access_token.txt"):
+        with open("access_token.txt", "r") as f:
+            access_token = f.read().strip()
+            logging.info("Loaded access token from file")
+    
+    if not refresh_token and exists("refresh_token.txt"):
+        with open("refresh_token.txt", "r") as f:
+            refresh_token = f.read().strip()
+            logging.info("Loaded refresh token from file")
 
     if not access_token or not refresh_token:
-        logging.error("Отсутствуют токены доступа к AmoCRM")
+        logging.error(f"Отсутствуют токены доступа к AmoCRM: access_token={'✓' if access_token else '✗'}, refresh_token={'✓' if refresh_token else '✗'}")
         return False
 
     subdomain = os.getenv("AMOCRM_SUBDOMAIN")
     client_id = os.getenv("AMOCRM_CLIENT_ID")
     client_secret = os.getenv("AMOCRM_CLIENT_SECRET")
     redirect_url = os.getenv("AMOCRM_REDIRECT_URL")
+    
+    # Check for missing environment variables
+    missing_vars = []
+    if not subdomain: missing_vars.append('AMOCRM_SUBDOMAIN')
+    if not client_id: missing_vars.append('AMOCRM_CLIENT_ID')
+    if not client_secret: missing_vars.append('AMOCRM_CLIENT_SECRET')
+    if not redirect_url: missing_vars.append('AMOCRM_REDIRECT_URL')
+    
+    if missing_vars:
+        logging.error(f"Отсутствуют переменные окружения для amoCRM: {', '.join(missing_vars)}")
+        return False
+    
     base_url = f"https://{subdomain}.amocrm.ru/api/v4"
 
     def refresh_access_token():
@@ -1742,20 +1761,74 @@ def create_amocrm_lead(name, phone, budget, car_link=None):
             "refresh_token": refresh_token,
             "redirect_uri": redirect_url,
         }
-        res = requests.post(token_url, json=data)
-        if res.status_code == 200:
-            result = res.json()
-            access_token = result.get("access_token")
-            refresh_token = result.get("refresh_token")
-            with open("access_token.txt", "w") as f:
-                f.write(access_token)
-            with open("refresh_token.txt", "w") as f:
-                f.write(refresh_token)
-            return True
-        else:
-            logging.error(
-                f"Ошибка при обновлении токена: {res.status_code}, {res.text}"
-            )
+        try:
+            logging.info("Пытаемся обновить токен amoCRM...")
+            res = requests.post(token_url, json=data, timeout=10)
+            
+            if res.status_code == 200:
+                result = res.json()
+                new_access_token = result.get("access_token")
+                new_refresh_token = result.get("refresh_token")
+                
+                if not new_access_token or not new_refresh_token:
+                    logging.error("Не получены новые токены в ответе от amoCRM")
+                    return False
+                    
+                access_token = new_access_token
+                refresh_token = new_refresh_token
+                
+                # Save updated tokens to files
+                with open("access_token.txt", "w", encoding='utf-8') as f:
+                    f.write(access_token)
+                with open("refresh_token.txt", "w", encoding='utf-8') as f:
+                    f.write(refresh_token)
+                    
+                logging.info("Токены amoCRM успешно обновлены")
+                return True
+            else:
+                logging.error(
+                    f"Ошибка при обновлении токена: {res.status_code}, {res.text}"
+                )
+                return False
+        except requests.RequestException as e:
+            logging.error(f"Ошибка сети при обновлении токена: {e}")
+            return False
+        except Exception as e:
+            logging.error(f"Неожиданная ошибка при обновлении токена: {e}")
+            return False
+
+    def validate_token():
+        """Test if current access token is valid"""
+        test_url = f"{base_url}/account"
+        test_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            logging.info("Проверяем действительность токена amoCRM...")
+            response = requests.get(test_url, headers=test_headers, timeout=10)
+            if response.status_code == 200:
+                logging.info("Токен amoCRM действителен")
+                return True
+            elif response.status_code == 401:
+                logging.warning("Токен amoCRM устарел, нуждается в обновлении")
+                return False
+            else:
+                logging.error(f"Ошибка проверки токена: {response.status_code}, {response.text}")
+                return False
+        except requests.RequestException as e:
+            logging.error(f"Ошибка сети при проверке токена: {e}")
+            return False
+    
+    # Validate token and refresh if needed
+    if not validate_token():
+        logging.info("Пытаемся обновить токен...")
+        if not refresh_access_token():
+            logging.error("Не удалось обновить токен amoCRM")
+            return False
+        # Test again after refresh
+        if not validate_token():
+            logging.error("Обновленный токен также не действителен")
             return False
 
     headers = {
